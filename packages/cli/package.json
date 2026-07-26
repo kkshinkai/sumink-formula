@@ -1,0 +1,28 @@
+{
+  "name": "@sumink-formula/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "sumi": "./bin/sumi.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@sumink-formula/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "fast-check": "4.9.0",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

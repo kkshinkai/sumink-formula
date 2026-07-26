@@ -1,0 +1,29 @@
+{
+  "name": "@sumink-formula/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "generate:unicode-identifiers": "node ./scripts/generate-unicode-identifier-ranges.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@unicode/unicode-16.0.0": "1.6.17",
+    "fast-check": "4.9.0",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

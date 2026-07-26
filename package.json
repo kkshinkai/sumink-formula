@@ -1,0 +1,22 @@
+{
+  "name": "sumink-formula",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.32.1",
+  "engines": {
+    "node": ">=22.20.0"
+  },
+  "scripts": {
+    "build": "pnpm --filter @sumink-formula/core run build && pnpm --filter @sumink-formula/cli run build",
+    "check": "pnpm run build && pnpm run typecheck:packages && pnpm run test:packages",
+    "test": "pnpm run build && pnpm run test:packages",
+    "test:packages": "pnpm --filter @sumink-formula/core run test && pnpm --filter @sumink-formula/cli run test",
+    "test:watch": "pnpm --parallel --filter @sumink-formula/core --filter @sumink-formula/cli run test:watch",
+    "typecheck": "pnpm run build && pnpm run typecheck:packages",
+    "typecheck:packages": "pnpm --filter @sumink-formula/core run typecheck && pnpm --filter @sumink-formula/cli run typecheck"
+  },
+  "devDependencies": {
+    "@sumink-formula/cli": "workspace:*"
+  }
+}
