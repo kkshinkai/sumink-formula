@@ -4,11 +4,11 @@ export type DiagnosticCategory = "error" | "warning";
 export type DiagnosticPhase = "lex" | "parse" | "resolve" | "evaluate";
 export type DiagnosticCode =
   | "SF1000" | "SF1001" | "SF1002" | "SF1003" | "SF1004" | "SF1005" | "SF1006" | "SF1007"
-  | "SF2000" | "SF2001" | "SF2002" | "SF2003" | "SF2004" | "SF2005" | "SF2006" | "SF2007" | "SF2008" | "SF2009"
+  | "SF2000" | "SF2001" | "SF2002" | "SF2003" | "SF2004" | "SF2006" | "SF2007" | "SF2008"
   | "SF3000"
   | "SF4000" | "SF4001" | "SF4002" | "SF4003" | "SF4004" | "SF4005" | "SF4006"
   | "SF4007" | "SF4008" | "SF4009" | "SF4010" | "SF4011" | "SF4012" | "SF4013"
-  | "SF4014" | "SF4015" | "SF4016" | "SF4017" | "SF4018" | "SF4019" | "SF4020"
+  | "SF4014" | "SF4015" | "SF4016" | "SF4018" | "SF4019"
   | "SF4021" | "SF4022" | "SF4023" | "SF4024" | "SF4025" | "SF4026" | "SF4027"
   | "SF4998" | "SF4999";
 

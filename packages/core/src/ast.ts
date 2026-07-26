@@ -12,8 +12,29 @@ interface AstNodeBase {
 
 export interface Program extends AstNodeBase {
   readonly kind: "Program";
-  readonly expressions: readonly Expression[];
+  readonly statements: readonly Statement[];
 }
+
+export interface LetStatement extends AstNodeBase {
+  readonly kind: "LetStatement";
+  readonly pattern: Pattern;
+  readonly value: Expression;
+}
+
+export interface FnStatement extends AstNodeBase {
+  readonly kind: "FnStatement";
+  readonly name: string;
+  readonly nameRange: TextRange;
+  readonly parameters: readonly Pattern[];
+  readonly body: Expression;
+}
+
+export interface ExpressionStatement extends AstNodeBase {
+  readonly kind: "ExpressionStatement";
+  readonly expression: Expression;
+}
+
+export type Statement = LetStatement | FnStatement | ExpressionStatement;
 
 export interface ErrorExpression extends AstNodeBase {
   readonly kind: "ErrorExpression";
@@ -34,19 +55,15 @@ export interface ArrayExpression extends AstNodeBase {
   readonly elements: readonly Expression[];
 }
 
-export type ObjectKey =
-  | { readonly kind: "StaticObjectKey"; readonly value: string; readonly range: TextRange }
-  | { readonly kind: "ComputedObjectKey"; readonly expression: Expression; readonly range: TextRange };
-
-export interface ObjectMember extends AstNodeBase {
-  readonly kind: "ObjectMember";
-  readonly key: ObjectKey;
+export interface DictionaryEntry extends AstNodeBase {
+  readonly kind: "DictionaryEntry";
+  readonly key: Expression;
   readonly value: Expression;
 }
 
-export interface ObjectExpression extends AstNodeBase {
-  readonly kind: "ObjectExpression";
-  readonly members: readonly ObjectMember[];
+export interface DictionaryExpression extends AstNodeBase {
+  readonly kind: "DictionaryExpression";
+  readonly entries: readonly DictionaryEntry[];
 }
 
 export interface CallExpression extends AstNodeBase {
@@ -68,19 +85,15 @@ export interface ClosureExpression extends AstNodeBase {
 
 export interface BlockExpression extends AstNodeBase {
   readonly kind: "BlockExpression";
-  readonly expressions: readonly Expression[];
-}
-
-export interface ConditionalBranch {
-  readonly condition: Expression;
-  readonly result: Expression;
-  readonly range: TextRange;
+  readonly statements: readonly Statement[];
+  readonly result?: Expression;
 }
 
 export interface IfExpression extends AstNodeBase {
   readonly kind: "IfExpression";
-  readonly branches: readonly ConditionalBranch[];
-  readonly elseBranch: Expression;
+  readonly condition: Expression;
+  readonly consequent: Expression;
+  readonly alternative?: Expression;
 }
 
 export type PrefixOperator = "-" | "not";
@@ -110,18 +123,6 @@ export interface ComputedSelectorExpression extends AstNodeBase {
   readonly kind: "ComputedSelectorExpression";
   readonly receiver: Expression;
   readonly selector: Expression;
-}
-
-export interface LetBinding extends AstNodeBase {
-  readonly kind: "LetBinding";
-  readonly pattern: Pattern;
-  readonly value: Expression;
-}
-
-export interface LetExpression extends AstNodeBase {
-  readonly kind: "LetExpression";
-  readonly bindings: readonly LetBinding[];
-  readonly body: Expression;
 }
 
 export interface MatchTestExpression extends AstNodeBase {
@@ -167,7 +168,7 @@ export type Expression = ErrorExpression
   | LiteralExpression
   | IdentifierExpression
   | ArrayExpression
-  | ObjectExpression
+  | DictionaryExpression
   | CallExpression
   | GroupedExpression
   | ClosureExpression
@@ -177,6 +178,5 @@ export type Expression = ErrorExpression
   | InfixOperatorExpression
   | FieldSelectorExpression
   | ComputedSelectorExpression
-  | LetExpression
   | MatchTestExpression
   | MatchSelectionExpression;

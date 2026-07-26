@@ -29,6 +29,7 @@ operand is `false`.
 
 `==` and `!=` perform no coercion. Nil and Boolean values compare by value.
 Finite numbers compare numerically, with positive and negative zero equal.
-Strings compare by their contents. Arrays compare element by element. Objects
-compare by their keys and values without regard to member order. Functions
+Strings compare by their contents. Arrays compare element by element in order.
+Dictionaries compare by their key-value mappings without regard to insertion
+order; keys and values use these same equality rules recursively. Functions
 compare by identity. Values of different kinds are unequal.

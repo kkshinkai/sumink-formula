@@ -1,0 +1,27 @@
+let firstKey = [1, {name: "Ada"}];
+let equivalentKey = [1, {name: "Ada"}];
+
+let values = {
+  [firstKey]: "array key",
+  [{kind: "status", code: 200}]: "dictionary key",
+  [true]: "boolean key"
+};
+
+print(values[equivalentKey]);
+print(values[{code: 200, kind: "status"}]);
+print(values[true]);
+print(values[false]);
+
+let updated = {
+  [firstKey]: "old",
+  middle: 0,
+  [equivalentKey]: "new"
+};
+
+print(updated);
+
+let identity = value -> value;
+let functions = {[identity]: "same closure"};
+
+print(functions[identity]);
+print(functions[value -> value]);

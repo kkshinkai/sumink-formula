@@ -6,9 +6,10 @@ The first CLI executes one `.sumi` source file:
 sumi program.sumi
 ```
 
-The program's final value is intentionally not printed. The CLI provides a
-single host binding, `print(value)`, which writes one value and a newline to
-standard output and returns `nil`.
+Successful program execution has the value `nil`, which is not printed. The CLI
+provides a single host binding, `print(value)`, which writes one value and a
+newline to standard output and returns `nil`. Dictionaries with non-string keys
+are displayed using computed-key notation.
 
 ```sumi
 print("Hello, world!");

@@ -1,12 +1,14 @@
 import type {
   Expression,
+  FnStatement,
   IdentifierExpression,
-  IdentifierPattern,
   NodeId,
   Pattern,
   Program,
+  Statement,
 } from "./ast.js";
 import { diagnostic, sortDiagnostics, type Diagnostic, type RelatedDiagnosticInformation } from "./diagnostic.js";
+import type { TextRange } from "./text.js";
 
 declare const bindingIdBrand: unique symbol;
 export type BindingId = number & { readonly [bindingIdBrand]: true };
@@ -47,25 +49,53 @@ class Scope {
   }
 }
 
+interface BindingDeclaration {
+  readonly name: string;
+  readonly range: TextRange;
+}
+
 class Resolver {
   readonly #references = new Map<NodeId, ResolvedReference>();
   readonly #bindings = new Map<NodeId, BindingId>();
-  readonly #bindingDeclarations = new Map<BindingId, IdentifierPattern>();
+  readonly #bindingDeclarations = new Map<BindingId, BindingDeclaration>();
   readonly #dependencies = new Set<string>();
   readonly #diagnostics: Diagnostic[] = [];
   #nextBindingId = 0;
 
   public resolve(program: Program): Resolution {
-    const root = new Scope();
-    for (const expression of program.expressions) {
-      this.#expression(expression, root);
-    }
+    this.#statementList(program.statements, new Scope());
     return {
       references: this.#references,
       bindings: this.#bindings,
       dependencies: this.#dependencies,
       diagnostics: sortDiagnostics(this.#diagnostics),
     };
+  }
+
+  #statementList(statements: readonly Statement[], scope: Scope): void {
+    for (const statement of statements) {
+      if (statement.kind === "FnStatement") {
+        this.#declareFunction(statement, scope);
+      }
+    }
+
+    for (const statement of statements) {
+      switch (statement.kind) {
+        case "LetStatement":
+          this.#expression(statement.value, scope);
+          this.#declarePattern(statement.pattern, scope);
+          break;
+        case "FnStatement": {
+          const functionScope = new Scope(scope);
+          statement.parameters.forEach((parameter) => this.#declarePattern(parameter, functionScope));
+          this.#expression(statement.body, functionScope);
+          break;
+        }
+        case "ExpressionStatement":
+          this.#expression(statement.expression, scope);
+          break;
+      }
+    }
   }
 
   #expression(expression: Expression, scope: Scope): void {
@@ -79,12 +109,10 @@ class Resolver {
       case "ArrayExpression":
         expression.elements.forEach((element) => this.#expression(element, scope));
         return;
-      case "ObjectExpression":
-        for (const member of expression.members) {
-          if (member.key.kind === "ComputedObjectKey") {
-            this.#expression(member.key.expression, scope);
-          }
-          this.#expression(member.value, scope);
+      case "DictionaryExpression":
+        for (const entry of expression.entries) {
+          this.#expression(entry.key, scope);
+          this.#expression(entry.value, scope);
         }
         return;
       case "CallExpression":
@@ -100,15 +128,20 @@ class Resolver {
         this.#expression(expression.body, closureScope);
         return;
       }
-      case "BlockExpression":
-        expression.expressions.forEach((child) => this.#expression(child, scope));
+      case "BlockExpression": {
+        const blockScope = new Scope(scope);
+        this.#statementList(expression.statements, blockScope);
+        if (expression.result !== undefined) {
+          this.#expression(expression.result, blockScope);
+        }
         return;
+      }
       case "IfExpression":
-        expression.branches.forEach((branch) => {
-          this.#expression(branch.condition, scope);
-          this.#expression(branch.result, scope);
-        });
-        this.#expression(expression.elseBranch, scope);
+        this.#expression(expression.condition, scope);
+        this.#expression(expression.consequent, scope);
+        if (expression.alternative !== undefined) {
+          this.#expression(expression.alternative, scope);
+        }
         return;
       case "PrefixOperatorExpression":
         this.#expression(expression.operand, scope);
@@ -124,13 +157,6 @@ class Resolver {
         this.#expression(expression.receiver, scope);
         this.#expression(expression.selector, scope);
         return;
-      case "LetExpression": {
-        const letScope = new Scope(scope);
-        expression.bindings.forEach((binding) => this.#declarePattern(binding.pattern, letScope));
-        expression.bindings.forEach((binding) => this.#expression(binding.value, letScope));
-        this.#expression(expression.body, letScope);
-        return;
-      }
       case "MatchTestExpression":
         this.#expression(expression.subject, scope);
         return;
@@ -158,35 +184,38 @@ class Resolver {
     }
   }
 
-  #declarePattern(pattern: Pattern, scope: Scope): void {
-    if (pattern.kind !== "IdentifierPattern") {
-      return;
-    }
+  #declareFunction(statement: FnStatement, scope: Scope): void {
+    this.#declare(statement.id, statement.name, statement.nameRange, scope);
+  }
 
+  #declarePattern(pattern: Pattern, scope: Scope): void {
+    if (pattern.kind === "IdentifierPattern") {
+      this.#declare(pattern.id, pattern.name, pattern.range, scope);
+    }
+  }
+
+  #declare(nodeId: NodeId, name: string, range: TextRange, scope: Scope): void {
     const bindingId = this.#newBindingId();
-    const declared = scope.declare(pattern.name, bindingId);
-    if (!declared) {
-      const previousBindingId = scope.lookup(pattern.name);
+    if (!scope.declare(name, bindingId)) {
+      const previousBindingId = scope.lookup(name);
       const previous = previousBindingId === undefined
         ? undefined
         : this.#bindingDeclarations.get(previousBindingId);
       const relatedInformation: readonly RelatedDiagnosticInformation[] | undefined = previous === undefined
         ? undefined
         : [{ message: "The first binding is here.", range: previous.range }];
-      this.#diagnostics.push(
-        diagnostic(
-          "SF3000",
-          "resolve",
-          `Duplicate binding '${pattern.name}' in the same lexical scope.`,
-          pattern.range,
-          relatedInformation,
-        ),
-      );
+      this.#diagnostics.push(diagnostic(
+        "SF3000",
+        "resolve",
+        `Duplicate binding '${name}' in the same lexical scope.`,
+        range,
+        relatedInformation,
+      ));
       return;
     }
 
-    this.#bindings.set(pattern.id, bindingId);
-    this.#bindingDeclarations.set(bindingId, pattern);
+    this.#bindings.set(nodeId, bindingId);
+    this.#bindingDeclarations.set(bindingId, { name, range });
   }
 
   #newBindingId(): BindingId {

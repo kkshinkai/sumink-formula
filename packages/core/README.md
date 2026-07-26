@@ -17,9 +17,11 @@ zero-width missing-token nodes without modifying the source stream. The AST is
 separate so editor recovery structure cannot become executable semantics.
 
 Local identifiers are resolved to `BindingId` values before evaluation.
-Unresolved lexical names are explicit host dependencies. Recursive `let` frames
-use once-initialized slots, and closures capture the frame itself; this is the
-mechanism behind lexical shadowing, escaping closures, and mutual recursion.
+Unresolved lexical names are explicit host dependencies. Every lexical scope
+predeclares its `fn` names and initializes them with closures over one shared
+environment. `let` bindings enter scope in source order. Closures capture the
+environment itself; this supports lexical shadowing, escaping closures, and
+mutually recursive `fn` declarations without giving `let` recursive semantics.
 
 Identifier classification is pinned to Unicode 16.0.0 tables rather than the
 host JavaScript engine's evolving Unicode property-escape implementation.
@@ -27,12 +29,15 @@ host JavaScript engine's evolving Unicode property-escape implementation.
 ## Engineering reference
 
 The scanner/parser/diagnostic/binder boundaries were studied against the
-official `microsoft/TypeScript` implementation at commit
-`637d5746b70257028fb95aad32ddec6b26ab0a14` (the TypeScript implementation, not
-TypeScript-Go), principally `scanner.ts`, `parser.ts`, `types.ts`, and
-`binder.ts` under `src/compiler`. The architecture is adapted rather than
-copied: TypeScript's AST is not lossless, while this package requires a
-distinct lossless CST.
+official TypeScript implementation at commit
+`0c2c7a358297d66df690230deaed8c98e7d77c04` (not TypeScript-Go), principally
+`scanner.ts`, `parser.ts`, `types.ts`, and `binder.ts` under `src/compiler`.
+Statement-list parsing and recovery also follow the boundaries documented by
+the Rust Reference. Braced arguments and ordinary lambda composition were
+checked against Scala 3, while missing and skipped syntax representation was
+checked against Roslyn. The architecture is adapted rather than copied:
+TypeScript's AST is not lossless, while this package requires a distinct
+lossless CST.
 
 ## Public entry points
 
@@ -44,6 +49,7 @@ distinct lossless CST.
 - `analyze(source)` and `interpret(source, options)` provide the complete paths.
 
 Host code constructs immutable composite values with `arrayValue` and
-`objectValue`, and wraps host callables with `nativeFunction`. Every external
-binding and native-function result is checked at runtime; plain mutable
-JavaScript arrays and objects are deliberately not accepted as formula values.
+`dictionaryValue`, and wraps host callables with `nativeFunction`. Every
+external binding and native-function result is checked at runtime; plain
+mutable JavaScript arrays, maps, and objects are deliberately not accepted as
+formula values.

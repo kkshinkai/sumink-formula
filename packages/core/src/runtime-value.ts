@@ -1,18 +1,18 @@
-export type RuntimeValue = null | boolean | number | string | ArrayValue | ObjectValue | FunctionValue;
+export type RuntimeValue = null | boolean | number | string | ArrayValue | DictionaryValue | FunctionValue;
 
 export interface ArrayValue {
   readonly kind: "array";
   readonly elements: readonly RuntimeValue[];
 }
 
-export interface ObjectField {
-  readonly key: string;
+export interface RuntimeDictionaryEntry {
+  readonly key: RuntimeValue;
   readonly value: RuntimeValue;
 }
 
-export interface ObjectValue {
-  readonly kind: "object";
-  readonly fields: readonly ObjectField[];
+export interface DictionaryValue {
+  readonly kind: "dictionary";
+  readonly entries: readonly RuntimeDictionaryEntry[];
 }
 
 export interface FunctionValue {
@@ -28,30 +28,46 @@ export interface NativeFunctionContext {
 export type NativeFunctionImplementation = (context: NativeFunctionContext) => RuntimeValue;
 
 export function arrayValue(elements: readonly RuntimeValue[]): ArrayValue {
-  const value = Object.freeze({ kind: "array", elements: Object.freeze([...elements]) });
+  const value = Object.freeze({ kind: "array" as const, elements: Object.freeze([...elements]) });
   if (!isRuntimeValue(value)) {
     throw new TypeError("An array runtime value contains an invalid element.");
   }
   return value;
 }
 
-export function objectValue(fields: readonly ObjectField[]): ObjectValue {
-  const unique = new Map<string, RuntimeValue>();
-  for (const field of fields) {
-    unique.set(field.key, field.value);
+export function dictionaryValue(entries: readonly RuntimeDictionaryEntry[]): DictionaryValue {
+  const unique: RuntimeDictionaryEntry[] = [];
+  for (const entry of entries) {
+    if (!isRuntimeValue(entry.key) || !isRuntimeValue(entry.value)) {
+      throw new TypeError("A dictionary runtime value contains an invalid entry.");
+    }
+    const existing = unique.findIndex((candidate) => runtimeEquals(candidate.key, entry.key));
+    if (existing === -1) {
+      unique.push(Object.freeze({ key: entry.key, value: entry.value }));
+    } else {
+      const first = unique[existing];
+      if (first === undefined) {
+        throw new Error("Dictionary entry index became invalid.");
+      }
+      unique[existing] = Object.freeze({ key: first.key, value: entry.value });
+    }
   }
+
   const value = Object.freeze({
-    kind: "object",
-    fields: Object.freeze([...unique].map(([key, value]) => Object.freeze({ key, value }))),
+    kind: "dictionary" as const,
+    entries: Object.freeze(unique),
   });
   if (!isRuntimeValue(value)) {
-    throw new TypeError("An object runtime value contains an invalid field.");
+    throw new TypeError("Failed to construct a dictionary runtime value.");
   }
   return value;
 }
 
-export function getObjectField(object: ObjectValue, key: string): RuntimeValue | undefined {
-  return object.fields.find((field) => field.key === key)?.value;
+export function getDictionaryEntry(
+  dictionary: DictionaryValue,
+  key: RuntimeValue,
+): RuntimeValue | undefined {
+  return dictionary.entries.find((entry) => runtimeEquals(entry.key, key))?.value;
 }
 
 interface NativeCallable {
@@ -106,18 +122,170 @@ export function isArrayValue(value: RuntimeValue): value is ArrayValue {
     && value.kind === "array" && Array.isArray(value.elements);
 }
 
-export function isObjectValue(value: RuntimeValue): value is ObjectValue {
+export function isDictionaryValue(value: RuntimeValue): value is DictionaryValue {
   return typeof value === "object" && value !== null
-    && value.kind === "object" && Array.isArray(value.fields);
+    && value.kind === "dictionary" && Array.isArray(value.entries);
 }
 
 export function isFunctionValue(value: RuntimeValue): value is FunctionValue {
   return typeof value === "object" && value !== null && value.kind === "function";
 }
 
+/** Structural equality for immutable data; functions compare by identity. */
+export function runtimeEquals(left: RuntimeValue, right: RuntimeValue): boolean {
+  type EqualityFrame =
+    | { readonly kind: "compare"; readonly left: RuntimeValue; readonly right: RuntimeValue }
+    | { readonly kind: "array-next"; readonly left: ArrayValue; readonly right: ArrayValue; readonly index: number }
+    | { readonly kind: "array-after"; readonly left: ArrayValue; readonly right: ArrayValue; readonly index: number }
+    | {
+        readonly kind: "dictionary-next";
+        readonly left: DictionaryValue;
+        readonly right: DictionaryValue;
+        readonly entryIndex: number;
+      }
+    | {
+        readonly kind: "dictionary-candidate";
+        readonly left: DictionaryValue;
+        readonly right: DictionaryValue;
+        readonly entryIndex: number;
+        readonly candidateIndex: number;
+      }
+    | {
+        readonly kind: "dictionary-candidate-after";
+        readonly left: DictionaryValue;
+        readonly right: DictionaryValue;
+        readonly entryIndex: number;
+        readonly candidateIndex: number;
+      }
+    | {
+        readonly kind: "dictionary-value-after";
+        readonly left: DictionaryValue;
+        readonly right: DictionaryValue;
+        readonly entryIndex: number;
+      };
+
+  const work: EqualityFrame[] = [{ kind: "compare", left, right }];
+  let equal = true;
+
+  while (work.length > 0) {
+    const frame = work.pop();
+    if (frame === undefined) {
+      continue;
+    }
+
+    switch (frame.kind) {
+      case "compare": {
+        if (frame.left === frame.right) {
+          equal = true;
+        } else if (isArrayValue(frame.left) && isArrayValue(frame.right)) {
+          if (frame.left.elements.length !== frame.right.elements.length) {
+            equal = false;
+          } else {
+            work.push({ kind: "array-next", left: frame.left, right: frame.right, index: 0 });
+          }
+        } else if (isDictionaryValue(frame.left) && isDictionaryValue(frame.right)) {
+          if (frame.left.entries.length !== frame.right.entries.length) {
+            equal = false;
+          } else {
+            work.push({
+              kind: "dictionary-next",
+              left: frame.left,
+              right: frame.right,
+              entryIndex: 0,
+            });
+          }
+        } else {
+          equal = false;
+        }
+        break;
+      }
+      case "array-next": {
+        if (frame.index === frame.left.elements.length) {
+          equal = true;
+          break;
+        }
+        const leftElement = frame.left.elements[frame.index];
+        const rightElement = frame.right.elements[frame.index];
+        if (leftElement === undefined || rightElement === undefined) {
+          equal = false;
+          break;
+        }
+        work.push({ ...frame, kind: "array-after" });
+        work.push({ kind: "compare", left: leftElement, right: rightElement });
+        break;
+      }
+      case "array-after":
+        if (equal) {
+          work.push({ kind: "array-next", left: frame.left, right: frame.right, index: frame.index + 1 });
+        }
+        break;
+      case "dictionary-next":
+        if (frame.entryIndex === frame.left.entries.length) {
+          equal = true;
+        } else {
+          work.push({
+            kind: "dictionary-candidate",
+            left: frame.left,
+            right: frame.right,
+            entryIndex: frame.entryIndex,
+            candidateIndex: 0,
+          });
+        }
+        break;
+      case "dictionary-candidate": {
+        const leftEntry = frame.left.entries[frame.entryIndex];
+        const rightEntry = frame.right.entries[frame.candidateIndex];
+        if (leftEntry === undefined || rightEntry === undefined) {
+          equal = false;
+          break;
+        }
+        work.push({ ...frame, kind: "dictionary-candidate-after" });
+        work.push({ kind: "compare", left: leftEntry.key, right: rightEntry.key });
+        break;
+      }
+      case "dictionary-candidate-after":
+        if (equal) {
+          const leftEntry = frame.left.entries[frame.entryIndex];
+          const rightEntry = frame.right.entries[frame.candidateIndex];
+          if (leftEntry === undefined || rightEntry === undefined) {
+            equal = false;
+            break;
+          }
+          work.push({
+            kind: "dictionary-value-after",
+            left: frame.left,
+            right: frame.right,
+            entryIndex: frame.entryIndex,
+          });
+          work.push({ kind: "compare", left: leftEntry.value, right: rightEntry.value });
+        } else if (frame.candidateIndex + 1 < frame.right.entries.length) {
+          work.push({
+            kind: "dictionary-candidate",
+            left: frame.left,
+            right: frame.right,
+            entryIndex: frame.entryIndex,
+            candidateIndex: frame.candidateIndex + 1,
+          });
+        }
+        break;
+      case "dictionary-value-after":
+        if (equal) {
+          work.push({
+            kind: "dictionary-next",
+            left: frame.left,
+            right: frame.right,
+            entryIndex: frame.entryIndex + 1,
+          });
+        }
+        break;
+    }
+  }
+  return equal;
+}
+
 /**
- * Validates the public host boundary, including the immutability and finiteness
- * invariants that TypeScript's structural types cannot enforce at runtime.
+ * Validates the public host boundary, including the immutability, acyclicity,
+ * finiteness, and unique-key invariants that structural TypeScript types cannot enforce.
  */
 export function isRuntimeValue(value: unknown): value is RuntimeValue {
   type WorkItem = { readonly value: unknown; readonly exit: boolean };
@@ -147,6 +315,10 @@ export function isRuntimeValue(value: unknown): value is RuntimeValue {
         continue;
       }
       if (item.exit) {
+        const runtimeCurrent = current as RuntimeValue;
+        if (isDictionaryValue(runtimeCurrent) && hasDuplicateKeys(runtimeCurrent.entries)) {
+          return false;
+        }
         visiting.delete(current);
         validatedRuntimeValues.add(current);
         continue;
@@ -176,24 +348,23 @@ export function isRuntimeValue(value: unknown): value is RuntimeValue {
           }
           break;
         }
-        case "object": {
-          const fields = ownDataProperty(current, "fields");
-          if (!Array.isArray(fields) || !Object.isFrozen(fields)) {
+        case "dictionary": {
+          const entries = ownDataProperty(current, "entries");
+          if (!Array.isArray(entries) || !Object.isFrozen(entries)) {
             return false;
           }
-          const keys = new Set<string>();
-          for (let index = fields.length - 1; index >= 0; index -= 1) {
-            const field: unknown = ownDataProperty(fields, String(index));
-            if (typeof field !== "object" || field === null || !Object.isFrozen(field)) {
+          for (let index = entries.length - 1; index >= 0; index -= 1) {
+            const entry = ownDataProperty(entries, String(index));
+            if (typeof entry !== "object" || entry === null || !Object.isFrozen(entry)) {
               return false;
             }
-            const key = ownDataProperty(field, "key");
-            const fieldValue = ownDataProperty(field, "value");
-            if (typeof key !== "string" || fieldValue === undefined || keys.has(key)) {
+            const key = ownDataProperty(entry, "key");
+            const entryValue = ownDataProperty(entry, "value");
+            if (key === undefined || entryValue === undefined) {
               return false;
             }
-            keys.add(key);
-            work.push({ value: fieldValue, exit: false });
+            work.push({ value: entryValue, exit: false });
+            work.push({ value: key, exit: false });
           }
           break;
         }
@@ -218,6 +389,22 @@ export function isRuntimeValue(value: unknown): value is RuntimeValue {
     // Proxies and accessors supplied by the host are not runtime values.
     return false;
   }
+}
+
+function hasDuplicateKeys(entries: readonly RuntimeDictionaryEntry[]): boolean {
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry === undefined) {
+      return true;
+    }
+    for (let candidate = index + 1; candidate < entries.length; candidate += 1) {
+      const other = entries[candidate];
+      if (other === undefined || runtimeEquals(entry.key, other.key)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function ownDataProperty(value: object, key: PropertyKey): unknown | undefined {

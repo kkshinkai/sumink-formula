@@ -14,8 +14,8 @@ folding.
 The following spellings are reserved and cannot be identifiers:
 
 ```text
-do      if      then    elif    else
-let     in      match   case
+if      else    let     fn
+match   case
 nil     true    false
 not     and     or
 ```
@@ -29,14 +29,15 @@ that name. If no such binding exists, it refers to an external binding supplied
 with the program. Evaluation is an error when a required external binding is
 absent or is not a valid runtime value.
 
-An inner binding may shadow an outer binding. Two patterns may not bind the
-same name in one scope.
+An inner scope may shadow a binding from an outer scope. A lexical scope may
+not declare the same name more than once, whether by `let`, `fn`, or parameter
+patterns.
 
 The static dependency set of a program is the set of its external references.
 It is determined without evaluation and therefore includes references in
 closure bodies and branches that might not run. The external bindings read by
 one evaluation must be a subset of that static set.
 
-Member names in `value.name` and identifier keys in `{name: value}` are not
+Member names in `value.name` and static keys in `{name: value}` are not
 identifier expressions and do not create dependencies. A computed selector or
-computed object key is an expression and may contain dependencies.
+computed dictionary key is an expression and may contain dependencies.

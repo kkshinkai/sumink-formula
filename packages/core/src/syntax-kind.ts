@@ -7,13 +7,10 @@ export const enum SyntaxKind {
   NumberLiteralToken,
   StringLiteralToken,
 
-  DoKeyword,
   IfKeyword,
-  ThenKeyword,
-  ElifKeyword,
   ElseKeyword,
   LetKeyword,
-  InKeyword,
+  FnKeyword,
   MatchKeyword,
   CaseKeyword,
   NilKeyword,
@@ -51,13 +48,10 @@ export const enum SyntaxKind {
 }
 
 const keywordKinds = new Map<string, SyntaxKind>([
-  ["do", SyntaxKind.DoKeyword],
   ["if", SyntaxKind.IfKeyword],
-  ["then", SyntaxKind.ThenKeyword],
-  ["elif", SyntaxKind.ElifKeyword],
   ["else", SyntaxKind.ElseKeyword],
   ["let", SyntaxKind.LetKeyword],
-  ["in", SyntaxKind.InKeyword],
+  ["fn", SyntaxKind.FnKeyword],
   ["match", SyntaxKind.MatchKeyword],
   ["case", SyntaxKind.CaseKeyword],
   ["nil", SyntaxKind.NilKeyword],

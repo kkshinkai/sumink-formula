@@ -12,20 +12,17 @@ import {
 describe("lex", () => {
   it("recognizes every first-version keyword and punctuation token", () => {
     const result = lex(
-      "do if then elif else let in match case nil true false not and or "
+      "if else let fn match case nil true false not and or "
       + "()[]{} ,;:. -> = == != < <= > >= + - * / %",
     );
 
     expect(result.diagnostics).toEqual([]);
     expect(result.tokens.filter((token) => token.kind !== SyntaxKind.WhitespaceTrivia).map((token) => token.kind))
       .toEqual([
-        SyntaxKind.DoKeyword,
         SyntaxKind.IfKeyword,
-        SyntaxKind.ThenKeyword,
-        SyntaxKind.ElifKeyword,
         SyntaxKind.ElseKeyword,
         SyntaxKind.LetKeyword,
-        SyntaxKind.InKeyword,
+        SyntaxKind.FnKeyword,
         SyntaxKind.MatchKeyword,
         SyntaxKind.CaseKeyword,
         SyntaxKind.NilKeyword,
@@ -62,11 +59,11 @@ describe("lex", () => {
   });
 
   it("supports Unicode identifiers without assigning meaning to letter case", () => {
-    const result = lex("alpha Αλφα 数据 _value a\u0301 𐐀");
+    const result = lex("alpha Αλφα 数据 _value a\u0301 𐐀 do then elif in");
 
     expect(result.diagnostics).toEqual([]);
     expect(result.tokens.filter((token) => token.kind === SyntaxKind.IdentifierToken).map((token) => token.value))
-      .toEqual(["alpha", "Αλφα", "数据", "_value", "a\u0301", "𐐀"]);
+      .toEqual(["alpha", "Αλφα", "数据", "_value", "a\u0301", "𐐀", "do", "then", "elif", "in"]);
   });
 
   it("keeps common unsupported logical-operator spellings as single tokens", () => {

@@ -5,11 +5,16 @@ import type { SyntaxToken } from "./token.js";
 export const enum CstKind {
   Program,
 
+  EmptyStatement,
+  LetStatement,
+  FnStatement,
+  ExpressionStatement,
+
   ErrorExpression,
   LiteralExpression,
   IdentifierExpression,
   ArrayExpression,
-  ObjectExpression,
+  DictionaryExpression,
   CallExpression,
   InfixCallExpression,
   GroupedExpression,
@@ -20,15 +25,12 @@ export const enum CstKind {
   InfixOperatorExpression,
   FieldSelectorExpression,
   ComputedSelectorExpression,
-  LetExpression,
   MatchTestExpression,
   MatchSelectionExpression,
 
-  ObjectMember,
-  ComputedObjectKey,
+  DictionaryEntry,
+  ComputedDictionaryKey,
   ClosureParameter,
-  ElifClause,
-  LetBinding,
   MatchCase,
   MatchElse,
 
@@ -37,6 +39,8 @@ export const enum CstKind {
   WildcardPattern,
   ErrorPattern,
 
+  FirstStatement = EmptyStatement,
+  LastStatement = ExpressionStatement,
   FirstExpression = ErrorExpression,
   LastExpression = MatchSelectionExpression,
   FirstPattern = LiteralPattern,

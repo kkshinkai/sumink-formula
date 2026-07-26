@@ -1,0 +1,17 @@
+fn compose(first, second) = value -> first(second(value));
+fn makeAdder(amount) = value -> value + amount;
+
+let addTwo = makeAdder(2);
+let double = value -> value * 2;
+let transform = compose(double, addTwo);
+
+print(transform(20));
+
+print({
+  let value = 100;
+  let read = () -> value;
+  {
+    let value = 999;
+    read()
+  }
+});

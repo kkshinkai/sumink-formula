@@ -1,7 +1,7 @@
 import {
   arrayValue,
+  dictionaryValue,
   nativeFunction,
-  objectValue,
   type RuntimeValue,
 } from "@sumink-formula/core";
 import { describe, expect, it } from "vitest";
@@ -21,16 +21,16 @@ describe("formatPrintValue", () => {
     expect(formatPrintValue(value)).toBe(expected);
   });
 
-  it("uses a deterministic recursive representation for arrays and objects", () => {
-    const value = objectValue([
+  it("uses a deterministic recursive representation for arrays and dictionaries", () => {
+    const value = dictionaryValue([
       { key: "message", value: "hello\nworld" },
       { key: "items", value: arrayValue([1, true, null, "text"]) },
-      { key: "quoted\"key", value: objectValue([{ key: "nested", value: -0 }]) },
+      { key: arrayValue(["computed"]), value: dictionaryValue([{ key: "nested", value: -0 }]) },
     ]);
 
     expect(formatPrintValue(value)).toBe(
       "{\"message\": \"hello\\nworld\", \"items\": [1, true, nil, \"text\"], "
-      + "\"quoted\\\"key\": {\"nested\": -0}}",
+      + "[[\"computed\"]]: {\"nested\": -0}}",
     );
   });
 

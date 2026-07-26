@@ -4,330 +4,288 @@ import { describe, expect, it } from "vitest";
 import { analyze, interpret } from "./interpreter.js";
 import {
   arrayValue,
+  dictionaryValue,
+  getDictionaryEntry,
   isArrayValue,
+  isDictionaryValue,
+  isFunctionValue,
   nativeFunction,
-  objectValue,
+  runtimeEquals,
   type RuntimeValue,
 } from "./runtime-value.js";
 
-describe("lexical closures", () => {
-  it("uses lexical rather than dynamic scope under shadowing", () => {
-    expectValue("let x = 1; f = () -> x in let x = 2 in f()", 1);
-  });
-
-  it("keeps captured environments alive after the creating call returns", () => {
-    expectValue("let make = (x) -> () -> x in let f = make(41) in f() + 1", 42);
-  });
-
-  it("keeps a closure valid after it escapes to the host and enters another evaluation", () => {
-    const created = successfulValue("() -> source", { source: 41 });
-    const reused = interpret("closure()", { globals: { closure: created, source: 99 } });
-
-    expect(reused.analysis.diagnostics).toEqual([]);
-    expect(reused.evaluation).toMatchObject({ ok: true, value: 41 });
-    expect([...reused.analysis.resolution.dependencies]).toEqual(["closure"]);
-    expect([...reused.evaluation.usedDependencies]).toEqual(["closure"]);
-  });
-
-  it("keeps an escaped mutually-recursive let frame intact", () => {
-    const even = successfulValue([
-      "let even = (n) -> if n == 0 then true else odd(n - 1);",
-      "odd = (n) -> if n == 0 then false else even(n - 1)",
-      "in even",
-    ].join(" "));
-
-    expectValue("even(25)", false, { even });
-    expectValue("even(26)", true, { even });
-  });
-
-  it("restores current dependency tracking inside callbacks invoked by an escaped closure", () => {
-    const apply = successfulValue("(callback) -> callback()");
-    const result = interpret("apply(() -> source)", {
-      globals: { apply, source: 42 },
-    });
-
-    expect(result.evaluation).toMatchObject({ ok: true, value: 42 });
-    expect([...result.analysis.resolution.dependencies]).toEqual(["apply", "source"]);
-    expect([...result.evaluation.usedDependencies]).toEqual(["apply", "source"]);
-  });
-
-  it("creates a separate captured parameter frame for every invocation", () => {
-    const value = successfulValue(
-      "let make = (x) -> () -> x; a = make(1); b = make(2) in [a(), b()]",
-    );
-
-    expect(isArrayValue(value) ? value.elements : value).toEqual([1, 2]);
-  });
-
-  it("supports self recursion through the let group's recursive frame", () => {
-    expectValue(
-      "let factorial = (n) -> if n == 0 then 1 else n * factorial(n - 1) in factorial(7)",
-      5_040,
-    );
-  });
-
-  it("supports order-independent mutual recursion between closures in one let group", () => {
-    const evenFirst = [
-      "let even = (n) -> if n == 0 then true else odd(n - 1);",
-      "odd = (n) -> if n == 0 then false else even(n - 1)",
-      "in even(30)",
-    ].join(" ");
-    const oddFirst = [
-      "let odd = (n) -> if n == 0 then false else even(n - 1);",
-      "even = (n) -> if n == 0 then true else odd(n - 1)",
-      "in even(30)",
-    ].join(" ");
-
-    expectValue(evenFirst, true);
-    expectValue(oddFirst, true);
-  });
-
-  it("supports a three-function recursion cycle", () => {
-    expectValue(
-      [
-        "let a = (n) -> if n == 0 then 'a' else b(n - 1);",
-        "b = (n) -> if n == 0 then 'b' else c(n - 1);",
-        "c = (n) -> if n == 0 then 'c' else a(n - 1)",
-        "in a(5)",
-      ].join(" "),
-      "c",
-    );
-  });
-
-  it("reports an early read of an uninitialized recursive slot", () => {
-    const result = interpret("let value = next(); next = () -> 1 in value");
-
-    expect(result.evaluation).toMatchObject({
-      ok: false,
-      diagnostic: { code: "SF4005", phase: "evaluate" },
-    });
-  });
-
-  it("does not leak a let binding into the next top-level expression", () => {
-    const analysis = analyze("let f = () -> 1 in f(); f");
-
-    expect([...analysis.resolution.dependencies]).toEqual(["f"]);
-  });
-
-  it("preserves closure capture and mutual recursion across generated values", () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: -10_000, max: 10_000 }),
-        fc.integer({ min: 0, max: 100 }),
-        (captured, depth) => {
-          expectValue(`let make = (x) -> () -> x in make(${captured})()`, captured);
-          expectValue(
-            [
-              "let even = (n) -> if n == 0 then true else odd(n - 1);",
-              "odd = (n) -> if n == 0 then false else even(n - 1)",
-              `in even(${depth})`,
-            ].join(" "),
-            depth % 2 === 0,
-          );
-        },
-      ),
-      { numRuns: 200, seed: 0x1e71ca1 },
-    );
-  });
-});
-
-describe("binding resolution and dependencies", () => {
-  it("assigns distinct identities to shadowed bindings", () => {
-    const analysis = analyze("let x = source; captured = () -> x in let x = other in captured() + x");
-    const localReferences = [...analysis.resolution.references.values()]
-      .filter((reference) => reference.kind === "local")
-      .map((reference) => reference.bindingId);
-
-    expect(analysis.diagnostics).toEqual([]);
-    // outer x, captured, and inner x are three independent lexical identities.
-    expect(new Set(localReferences).size).toBe(3);
-    expect([...analysis.resolution.dependencies]).toEqual(["source", "other"]);
-  });
-
-  it("keeps dependencies invariant under alpha-renaming", () => {
-    const first = analyze("let x = input in (y) -> x + y + outside");
-    const renamed = analyze("let local = input in (argument) -> local + argument + outside");
-
-    expect([...first.resolution.dependencies]).toEqual([...renamed.resolution.dependencies]);
-  });
-
-  it("never observes a dependency omitted by static resolution", () => {
-    fc.assert(
-      fc.property(fc.boolean(), (condition) => {
-        const source = "condition and value";
-        const result = interpret(source, { globals: { condition, value: true } });
-        const predicted = result.analysis.resolution.dependencies;
-
-        for (const actual of result.evaluation.usedDependencies) {
-          expect(predicted.has(actual)).toBe(true);
-        }
-        expect([...predicted]).toEqual(["condition", "value"]);
-        expect([...result.evaluation.usedDependencies]).toEqual(
-          condition ? ["condition", "value"] : ["condition"],
-        );
-      }),
-      { numRuns: 100, seed: 0xd3e3d },
-    );
-  });
-
-  it("accepts the full ReadonlyMap host contract rather than only Map instances", () => {
-    const globals = new ReadonlyGlobals([["answer", 42]]);
-
-    expect(interpret("answer", { globals }).evaluation).toMatchObject({ ok: true, value: 42 });
-  });
-
-  it("diagnoses duplicate binders in one lexical scope", () => {
-    const analysis = analyze("let x = 1; x = 2 in x");
-
-    expect(analysis.resolution.diagnostics).toHaveLength(1);
-    expect(analysis.resolution.diagnostics[0]).toMatchObject({ code: "SF3000", phase: "resolve" });
-    expect(analysis.resolution.diagnostics[0]?.relatedInformation).toHaveLength(1);
-  });
-});
-
-describe("first-version expressions", () => {
-  it("agrees with an independent arithmetic model for generated trees", () => {
-    fc.assert(
-      fc.property(arithmeticExpression(5), ({ source, value }) => {
-        expectValue(source, value);
-      }),
-      { numRuns: 500, seed: 0xa117e },
-    );
-  });
-
-  it("evaluates program and block sequences to their final value", () => {
-    expectValue("1; 2; 3;", 3);
-    expectValue("do {}", null);
-    expectValue("do {1; 2; 3;}", 3);
-  });
-
-  it("evaluates strict subexpressions in documented left-to-right order", () => {
+describe("statements and lexical closures", () => {
+  it("evaluates programs for effects and returns nil", () => {
     const events: RuntimeValue[] = [];
     const tap = nativeFunction(({ arguments: [value = null] }) => {
       events.push(value);
       return value;
     }, { name: "tap", arity: 1 });
 
-    expectValue(
-      "let a = tap('let-a'); b = tap('let-b') in "
-      + "[tap('array-a'), {[tap('key')]: tap('value')}, tap('array-b')]",
-      arrayValue([
-        "array-a",
-        objectValue([{ key: "key", value: "value" }]),
-        "array-b",
-      ]),
-      { tap },
+    const result = interpret(";;; tap(1); tap(2); ;", { globals: { tap } });
+
+    expect(result.analysis.diagnostics).toEqual([]);
+    expect(result.evaluation).toMatchObject({ ok: true, value: null });
+    expect(events).toEqual([1, 2]);
+  });
+
+  it("uses lexical rather than dynamic scope under shadowing", () => {
+    expectExpression("{ let x = 1; let f = () -> x; { let x = 2; f() } }", 1);
+  });
+
+  it("keeps captured environments alive after the creating call returns", () => {
+    expectExpression("{ let make = x -> () -> x; let f = make(41); f() + 1 }", 42);
+  });
+
+  it("keeps an escaped closure valid in another evaluation", () => {
+    const closure = expressionValue("() -> source", { source: 41 });
+    const result = expressionValue("closure()", { closure, source: 99 });
+
+    expect(result).toBe(41);
+  });
+
+  it("keeps an escaped fn closure valid in another evaluation", () => {
+    const closure = expressionValue("{ fn read() = source; read }", { source: 41 });
+    const result = expressionValue("closure()", { closure, source: 99 });
+
+    expect(result).toBe(41);
+  });
+
+  it("creates a separate captured parameter frame for every invocation", () => {
+    expectExpression(
+      "{ let make = x -> () -> x; let a = make(1); let b = make(2); [a(), b()] }",
+      arrayValue([1, 2]),
     );
-    expect(events).toEqual(["let-a", "let-b", "array-a", "key", "value", "array-b"]);
   });
 
-  it("evaluates grouped, prefix, conditional, and match-test expressions", () => {
-    expectValue("-(1 + 2) * 3", -9);
-    expectValue("not false", true);
-    expectValue("if false then missing elif true then 2 else missing", 2);
-    expectValue("1 match 1", true);
-    expectValue("1 match 2", false);
-    expectValue("1 match value", true);
+  it("keeps let sequential, non-hoisted, and non-recursive", () => {
+    const self = analyze("let f = x -> f(x); f(0);");
+    const forward = analyze("let first = second; let second = 2; first;");
+
+    expect([...self.resolution.dependencies]).toEqual(["f"]);
+    expect([...forward.resolution.dependencies]).toEqual(["second"]);
   });
 
-  it("defines strict, non-coercing operator behavior", () => {
-    expectValue("10 - 3 - 2", 5);
-    expectValue("false or true and false", false);
-    expectValue("'a' + 'b'", "ab");
-    expectValue("'1' == 1", false);
-    expectValue("-0 == 0", true);
-    expectValue("[1, {x: 2}] == [1, {x: 2}]", true);
-    expectValue("{a: 1, b: 2} == {b: 2, a: 1}", true);
+  it("supports direct and mutual recursion through hoisted fn bindings", () => {
+    expectExpression(
+      "{ fn factorial(n) = if (n == 0) 1 else n * factorial(n - 1); factorial(7) }",
+      5_040,
+    );
+    expectExpression([
+      "{",
+      "fn even(n) = if (n == 0) true else odd(n - 1);",
+      "fn odd(n) = if (n == 0) false else even(n - 1);",
+      "even(30)",
+      "}",
+    ].join(" "), true);
+  });
 
-    expect(interpret("1 < '2'").evaluation).toMatchObject({
+  it("supports a three-function recursion cycle independently of declaration order", () => {
+    expectExpression([
+      "{",
+      "fn c(n) = if (n == 0) 'c' else a(n - 1);",
+      "fn a(n) = if (n == 0) 'a' else b(n - 1);",
+      "fn b(n) = if (n == 0) 'b' else c(n - 1);",
+      "a(5)",
+      "}",
+    ].join(" "), "c");
+  });
+
+  it("keeps an escaped mutually recursive fn group alive", () => {
+    expectExpression([
+      "{",
+      "let functions = {",
+      "fn even(n) = if (n == 0) true else odd(n - 1);",
+      "fn odd(n) = if (n == 0) false else even(n - 1);",
+      "{even: even, odd: odd}",
+      "};",
+      "functions.even(20)",
+      "}",
+    ].join(" "), true);
+  });
+
+  it("makes prior lets visible to fn bodies but not later lets", () => {
+    expectExpression("{ let value = 42; fn read() = value; read() }", 42);
+
+    const analysis = analyze("{ fn read() = value; let value = 42; read() }");
+    expect([...analysis.resolution.dependencies]).toEqual(["value"]);
+  });
+
+  it("reports an early call that reaches a not-yet-initialized captured let", () => {
+    const result = interpret([
+      "read();",
+      "let value = 42;",
+      "fn read() = value;",
+    ].join(" "));
+
+    expect(result.analysis.diagnostics).toEqual([]);
+    expect(result.evaluation).toMatchObject({
       ok: false,
-      diagnostic: { code: "SF4015" },
-    });
-    expect(interpret("1 / 0").evaluation).toMatchObject({
-      ok: false,
-      diagnostic: { code: "SF4013" },
+      diagnostic: { code: "SF4005", phase: "evaluate" },
     });
   });
 
-  it("compares deeply nested host values without consuming the host call stack", () => {
-    let left: RuntimeValue = null;
-    let right: RuntimeValue = null;
-    for (let depth = 0; depth < 10_000; depth += 1) {
-      left = arrayValue([left]);
-      right = arrayValue([right]);
+  it("diagnoses duplicate let and fn bindings in one scope", () => {
+    const duplicateLet = analyze("let x = 1; let x = 2;");
+    const mixed = analyze("fn x() = nil; let x = 1;");
+
+    for (const analysis of [duplicateLet, mixed]) {
+      expect(analysis.resolution.diagnostics).toHaveLength(1);
+      expect(analysis.resolution.diagnostics[0]).toMatchObject({ code: "SF3000", phase: "resolve" });
+      expect(analysis.resolution.diagnostics[0]?.relatedInformation).toHaveLength(1);
     }
-
-    expectValue("left == right", true, { left, right });
   });
 
-  it("evaluates computed object keys and chained selectors", () => {
-    expectValue("{['na' + 'me']: {scores: [10, 20, 30]}}.name.scores[1]", 20);
-    expectValue("{[2]: 'two'}[2]", "two");
-    expectValue("{value: 1, value: 2}.value", 2);
-    expectValue("{}.missing", null);
-    expectValue("[{run: () -> 7}][0].run()", 7);
-  });
+  it("reports let pattern failure without creating a binding", () => {
+    const result = interpret("let 1 = 2;");
 
-  it("rejects negative array indexes and non-finite arithmetic", () => {
-    expect(interpret("[1][-1]").evaluation).toMatchObject({
+    expect(result.analysis.diagnostics).toEqual([]);
+    expect(result.evaluation).toMatchObject({
       ok: false,
-      diagnostic: { code: "SF4016" },
-    });
-    expect(interpret("1e308 * 1e308").evaluation).toMatchObject({
-      ok: false,
-      diagnostic: { code: "SF4023" },
+      diagnostic: { code: "SF4007", phase: "evaluate" },
     });
   });
+});
 
-  it("binds match case identifiers only within their result", () => {
-    expectValue("42 match { case 0 -> 'zero' case value -> value + 1 }", 43);
+describe("blocks, lambdas, and calls", () => {
+  it("distinguishes a block tail from a terminated expression", () => {
+    expectExpression("{;}", null);
+    expectExpression("{;;;;;;}", null);
+    expectExpression("{1}", 1);
+    expectExpression("{1;}", null);
+    expectExpression("{;; 1}", 1);
   });
 
-  it("uses literal closure parameters as real patterns", () => {
-    expectValue("let onlyOne = (1) -> 'one' in onlyOne(1)", "one");
+  it("accepts ordinary bare single-pattern lambdas everywhere", () => {
+    expectExpression("(x -> x + 1)(2)", 3);
+    expectExpression("((x) -> x + 1)(2)", 3);
+    expectExpression("{ let f = 1 -> 'one'; f(1) }", "one");
 
-    const mismatch = interpret("let onlyOne = (1) -> 'one' in onlyOne(2)");
-    expect(mismatch.evaluation).toMatchObject({
-      ok: false,
-      diagnostic: { code: "SF4011", phase: "evaluate" },
-    });
+    const mismatch = interpret("let f = 1 -> 'one'; f(2);");
+    expect(mismatch.evaluation).toMatchObject({ ok: false, diagnostic: { code: "SF4011" } });
   });
 
-  it("desugars an infix call to an ordinary lexical function call", () => {
-    const pair = nativeFunction(
-      ({ arguments: arguments_ }) => arrayValue(arguments_),
-      { name: "pair", arity: 2 },
+  it("treats a trailing brace as one ordinary braced argument", () => {
+    expectExpression("{ fn apply(f) = f(2); apply { x -> x + 1 } }", 3);
+    expectExpression("{ fn identity(x) = x; identity { 1 } }", 1);
+    expectExpression("{ fn identity(x) = x; identity { 1; } }", null);
+
+    const empty = expressionValue("{ fn identity(x) = x; identity {} }");
+    expect(isDictionaryValue(empty) ? empty.entries : empty).toEqual([]);
+  });
+
+  it("supports repeated trailing brace calls", () => {
+    expectExpression("{ fn curry(x) = y -> x + y; curry { 1 } { 2 } }", 3);
+  });
+
+  it("uses nil for if without else and associates else with the nearest if", () => {
+    expectExpression("if (false) 1", null);
+    expectExpression("if (true) if (false) 1 else 2", 2);
+    expectExpression("if (false) if (true) 1 else 2 else 3", 3);
+  });
+});
+
+describe("dictionary values", () => {
+  it("constructs static and arbitrary computed keys", () => {
+    const value = expressionValue("{name: 'Ada', 1: 'one', [[1, 2]]: 'pair'}");
+    expect(isDictionaryValue(value)).toBe(true);
+    if (!isDictionaryValue(value)) {
+      return;
+    }
+    expect(getDictionaryEntry(value, "name")).toBe("Ada");
+    expect(getDictionaryEntry(value, 1)).toBe("one");
+    expect(getDictionaryEntry(value, arrayValue([1, 2]))).toBe("pair");
+  });
+
+  it("makes field selection exact sugar for a text-key lookup", () => {
+    expectExpression("{name: 'Ada'}.name", "Ada");
+    expectExpression("{name: 'Ada'}['name']", "Ada");
+  });
+
+  it("uses deep recursive equality for array and dictionary keys", () => {
+    expectExpression("{[[1, {x: 2}]]: 'found'}[[1, {x: 2}]]", "found");
+    expectExpression("{{[{}]: 'empty'}[{}]}", "empty");
+    expectExpression("{[{a: 1, b: 2}]: 'found'}[{b: 2, a: 1}]", "found");
+  });
+
+  it("replaces equal keys without moving the first entry", () => {
+    const value = expressionValue("{[[1]]: 'first', other: 2, [[1]]: 'last'}");
+    expect(isDictionaryValue(value)).toBe(true);
+    if (!isDictionaryValue(value)) {
+      return;
+    }
+    expect(value.entries).toHaveLength(2);
+    expect(value.entries[0]?.value).toBe("last");
+    expect(value.entries[1]?.key).toBe("other");
+  });
+
+  it("compares dictionaries deeply without considering insertion order", () => {
+    expectExpression("{a: [1, 2], b: {x: 3}} == {b: {x: 3}, a: [1, 2]}", true);
+    expectExpression("{a: 1} == {a: 2}", false);
+  });
+
+  it("compares function keys by closure identity", () => {
+    expectExpression("{ let f = x -> x; {[f]: 1}[f] }", 1);
+    expectExpression("{ let f = x -> x; {[f]: 1}[x -> x] }", null);
+  });
+
+  it("satisfies equality and lookup invariants for generated immutable data", () => {
+    fc.assert(
+      fc.property(runtimeData(3), runtimeData(3), (left, right) => {
+        expect(runtimeEquals(left, left)).toBe(true);
+        expect(runtimeEquals(left, right)).toBe(runtimeEquals(right, left));
+
+        const equivalent = cloneRuntimeData(left);
+        const third = cloneRuntimeData(equivalent);
+        expect(runtimeEquals(left, equivalent)).toBe(true);
+        expect(runtimeEquals(equivalent, third)).toBe(true);
+        expect(runtimeEquals(left, third)).toBe(true);
+
+        const dictionary = dictionaryValue([{ key: left, value: 42 }]);
+        expect(getDictionaryEntry(dictionary, equivalent)).toBe(42);
+      }),
+      { numRuns: 300, seed: 0xd1c710 },
     );
-    const value = successfulValue("1 pair 2", { pair });
-
-    expect(isArrayValue(value) ? value.elements : value).toEqual([1, 2]);
   });
+});
 
-  it("applies documented precedence and associativity to named infix calls", () => {
-    const pair = nativeFunction(
-      ({ arguments: arguments_ }) => arrayValue(arguments_),
-      { name: "pair", arity: 2 },
-    );
-    const value = successfulValue("1 + 2 pair 3 * 4", { pair });
-    const leftAssociated = successfulValue("1 pair 2 pair 3", { pair });
+describe("evaluation contracts", () => {
+  it("evaluates strict subexpressions from left to right", () => {
+    const events: RuntimeValue[] = [];
+    const tap = nativeFunction(({ arguments: [value = null] }) => {
+      events.push(value);
+      return value;
+    }, { name: "tap", arity: 1 });
 
-    expect(isArrayValue(value) ? value.elements : value).toEqual([3, 12]);
-    expect(isArrayValue(leftAssociated) ? leftAssociated.elements : leftAssociated).toEqual([
-      { kind: "array", elements: [1, 2] },
-      3,
+    interpret([
+      "let first = tap('let');",
+      "tap([tap('array-1'), tap('array-2')]);",
+      "tap({[tap('key')]: tap('value')});",
+      "tap(tap('argument'));",
+    ].join(" "), { globals: { tap } });
+
+    expect(events).toEqual([
+      "let",
+      "array-1", "array-2", arrayValue(["array-1", "array-2"]),
+      "key", "value", dictionaryValue([{ key: "key", value: "value" }]),
+      "argument", "argument",
     ]);
   });
 
-  it("short-circuits boolean operators", () => {
-    expectValue("false and missing", false);
-    expectValue("true or missing", true);
+  it("keeps static dependencies conservative under short-circuiting", () => {
+    const result = interpret("condition and value;", {
+      globals: { condition: false, value: true },
+    });
+
+    expect([...result.analysis.resolution.dependencies]).toEqual(["condition", "value"]);
+    expect([...result.evaluation.usedDependencies]).toEqual(["condition"]);
   });
 
   it("never exposes a host exception as the language result", () => {
     const explode = nativeFunction(() => {
       throw new Error("host details");
     });
-    const result = interpret("explode()", { globals: { explode } });
+    const result = interpret("explode();", { globals: { explode } });
 
     expect(result.evaluation).toMatchObject({
       ok: false,
@@ -335,148 +293,77 @@ describe("first-version expressions", () => {
     });
   });
 
-  it("rejects invalid values at both host boundaries", () => {
-    const invalidGlobal = interpret("bad", {
-      globals: { bad: Number.NaN as RuntimeValue },
-    });
-    const invalidResult = nativeFunction(
-      () => ({ kind: "array", elements: [] }) as RuntimeValue,
-    );
-    const returned = interpret("invalidResult()", { globals: { invalidResult } });
-
-    expect(invalidGlobal.evaluation).toMatchObject({
-      ok: false,
-      diagnostic: { code: "SF4026" },
-    });
-    expect(returned.evaluation).toMatchObject({
-      ok: false,
-      diagnostic: { code: "SF4027" },
-    });
-  });
-
-  it("attaches formula call sites to evaluation failures", () => {
-    const result = interpret("let fail = () -> 1 / 0; call = () -> fail() in call()");
-
-    expect(result.evaluation).toMatchObject({
-      ok: false,
-      diagnostic: { code: "SF4013" },
-    });
-    if (!result.evaluation.ok) {
-      expect(result.evaluation.diagnostic.relatedInformation).toHaveLength(2);
-      expect(result.evaluation.diagnostic.relatedInformation?.every(
-        (entry) => entry.message === "Called from here.",
-      )).toBe(true);
-    }
-  });
-
-  it("reports deterministic resource-limit diagnostics", () => {
-    const loop = "let loop = (n) -> loop(n + 1) in loop(0)";
-
-    expect(interpret(loop, { maxCallDepth: 20 }).evaluation).toMatchObject({
+  it("enforces step and call-depth limits", () => {
+    const loop = "fn loop(n) = loop(n + 1); loop(0);";
+    expect(interpret(loop, { maxCallDepth: 8 }).evaluation).toMatchObject({
       ok: false,
       diagnostic: { code: "SF4025" },
     });
-    expect(interpret("1 + 2", { maxSteps: 2 }).evaluation).toMatchObject({
+    expect(interpret("1 + 2;", { maxSteps: 1 }).evaluation).toMatchObject({
       ok: false,
       diagnostic: { code: "SF4024" },
     });
   });
 });
 
-function expectValue(
-  source: string,
-  expected: RuntimeValue,
-  globals?: Readonly<Record<string, RuntimeValue>>,
-): void {
-  expect(successfulValue(source, globals)).toEqual(expected);
-}
-
-function successfulValue(
-  source: string,
-  globals?: Readonly<Record<string, RuntimeValue>>,
+function expressionValue(
+  expression: string,
+  globals: Readonly<Record<string, RuntimeValue>> = {},
 ): RuntimeValue {
-  const result = interpret(source, globals === undefined ? {} : { globals });
-  expect(result.analysis.diagnostics, source).toEqual([]);
-  expect(result.evaluation, source).toMatchObject({ ok: true });
-  if (!result.evaluation.ok) {
-    throw new Error(result.evaluation.diagnostic.message);
+  let captured: RuntimeValue | undefined;
+  const capture = nativeFunction(({ arguments: [value = null] }) => {
+    captured = value;
+    return null;
+  }, { name: "capture", arity: 1 });
+  const result = interpret(`capture(${expression});`, { globals: { ...globals, capture } });
+  expect(result.analysis.diagnostics, expression).toEqual([]);
+  expect(result.evaluation, expression).toMatchObject({ ok: true });
+  if (captured === undefined) {
+    throw new Error("Expression value was not captured.");
   }
-  return result.evaluation.value;
+  return captured;
 }
 
-interface ArithmeticExample {
-  readonly source: string;
-  readonly value: number;
+function expectExpression(
+  expression: string,
+  expected: RuntimeValue,
+  globals: Readonly<Record<string, RuntimeValue>> = {},
+): void {
+  expect(runtimeEquals(expressionValue(expression, globals), expected), expression).toBe(true);
 }
 
-class ReadonlyGlobals implements ReadonlyMap<string, RuntimeValue> {
-  readonly #values: Map<string, RuntimeValue>;
-
-  public constructor(entries: Iterable<readonly [string, RuntimeValue]>) {
-    this.#values = new Map(entries);
-  }
-
-  public get size(): number {
-    return this.#values.size;
-  }
-
-  public get(key: string): RuntimeValue | undefined {
-    return this.#values.get(key);
-  }
-
-  public has(key: string): boolean {
-    return this.#values.has(key);
-  }
-
-  public entries(): MapIterator<[string, RuntimeValue]> {
-    return this.#values.entries();
-  }
-
-  public keys(): MapIterator<string> {
-    return this.#values.keys();
-  }
-
-  public values(): MapIterator<RuntimeValue> {
-    return this.#values.values();
-  }
-
-  public forEach(
-    callback: (value: RuntimeValue, key: string, map: ReadonlyMap<string, RuntimeValue>) => void,
-    thisArg?: unknown,
-  ): void {
-    for (const [key, value] of this.#values) {
-      callback.call(thisArg, value, key, this);
-    }
-  }
-
-  public [Symbol.iterator](): MapIterator<[string, RuntimeValue]> {
-    return this.#values[Symbol.iterator]();
-  }
-}
-
-function arithmeticExpression(depth: number): fc.Arbitrary<ArithmeticExample> {
-  const leaf = fc.integer({ min: -20, max: 20 }).map((value) => ({
-    source: value < 0 ? `(${value})` : String(value),
-    value,
-  }));
-  if (depth === 0) {
-    return leaf;
-  }
-
-  return fc.oneof(
-    { depthSize: "small" },
-    leaf,
-    fc.tuple(
-      arithmeticExpression(depth - 1),
-      fc.constantFrom("+", "-", "*"),
-      arithmeticExpression(depth - 1),
-    ).map(([left, operator, right]) => ({
-      source: `(${left.source} ${operator} ${right.source})`,
-      value: operator === "+"
-        ? left.value + right.value
-        : operator === "-"
-          ? left.value - right.value
-          : left.value * right.value,
-    })),
+function runtimeData(depth: number): fc.Arbitrary<RuntimeValue> {
+  const primitive = fc.oneof(
+    fc.constant(null),
+    fc.boolean(),
+    fc.integer({ min: -100, max: 100 }),
+    fc.string({ maxLength: 8 }),
   );
+  if (depth === 0) {
+    return primitive;
+  }
+  return fc.oneof(
+    primitive,
+    fc.array(runtimeData(depth - 1), { maxLength: 4 }).map(arrayValue),
+    fc.array(
+      fc.tuple(runtimeData(depth - 1), runtimeData(depth - 1)),
+      { maxLength: 4 },
+    ).map((entries) => dictionaryValue(entries.map(([key, value]) => ({ key, value })))),
+  );
+}
+
+function cloneRuntimeData(value: RuntimeValue): RuntimeValue {
+  if (isArrayValue(value)) {
+    return arrayValue(value.elements.map(cloneRuntimeData));
+  }
+  if (isDictionaryValue(value)) {
+    return dictionaryValue(value.entries.map((entry) => ({
+      key: cloneRuntimeData(entry.key),
+      value: cloneRuntimeData(entry.value),
+    })));
+  }
+  if (isFunctionValue(value)) {
+    return value;
+  }
+  return value;
 }

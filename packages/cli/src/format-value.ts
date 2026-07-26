@@ -1,7 +1,7 @@
 import {
   isArrayValue,
+  isDictionaryValue,
   isFunctionValue,
-  isObjectValue,
   type FunctionValue,
   type RuntimeValue,
 } from "@sumink-formula/core";
@@ -27,15 +27,21 @@ function formatNestedValue(value: RuntimeValue): string {
   if (isArrayValue(value)) {
     return `[${value.elements.map(formatNestedValue).join(", ")}]`;
   }
-  if (isObjectValue(value)) {
-    return `{${value.fields
-      .map((field) => `${JSON.stringify(field.key)}: ${formatNestedValue(field.value)}`)
+  if (isDictionaryValue(value)) {
+    return `{${value.entries
+      .map((entry) => `${formatDictionaryKey(entry.key)}: ${formatNestedValue(entry.value)}`)
       .join(", ")}}`;
   }
   if (isFunctionValue(value)) {
     return formatFunction(value);
   }
   return assertNever(value);
+}
+
+function formatDictionaryKey(value: RuntimeValue): string {
+  return typeof value === "string"
+    ? JSON.stringify(value)
+    : `[${formatNestedValue(value)}]`;
 }
 
 function formatFunction(value: FunctionValue): string {

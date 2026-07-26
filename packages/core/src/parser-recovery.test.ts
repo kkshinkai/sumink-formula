@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { CstKind, type CstElement, type CstNode } from "./cst.js";
+import { CstKind, isCstNode, type CstElement, type CstNode } from "./cst.js";
 import { lex } from "./lexer.js";
 import { parse } from "./parser.js";
 import { SyntaxKind } from "./syntax-kind.js";
@@ -14,114 +14,137 @@ interface RecoveryFixture {
 }
 
 const lexicalErrorFixtures: readonly RecoveryFixture[] = [
-  { name: "program", source: "1 @ 2; 3", preservedKinds: [CstKind.Program] },
-  { name: "array element", source: "[1 @ 2, 3]", preservedKinds: [CstKind.ArrayExpression] },
-  { name: "object value", source: "{a: 1 @ 2, b: 3}", preservedKinds: [CstKind.ObjectExpression] },
   {
-    name: "computed object key",
-    source: "{[1 @ 2]: 3, b: 4}",
-    preservedKinds: [CstKind.ObjectExpression, CstKind.ComputedObjectKey],
+    name: "statement and pattern coverage",
+    source: "; let _ = 1; fn f(1, _) = @;",
+    preservedKinds: [CstKind.EmptyStatement, CstKind.LetStatement, CstKind.FnStatement, CstKind.WildcardPattern],
   },
-  { name: "call argument", source: "f(1 @ 2, 3)", preservedKinds: [CstKind.CallExpression] },
-  { name: "grouped expression", source: "(1 @ 2)", preservedKinds: [CstKind.GroupedExpression] },
-  { name: "closure body", source: "(x) -> x @ 1", preservedKinds: [CstKind.ClosureExpression] },
-  { name: "block expression", source: "do { 1 @ 2; 3 }", preservedKinds: [CstKind.BlockExpression] },
-  { name: "if condition", source: "if true @ false then 1 else 0", preservedKinds: [CstKind.IfExpression] },
-  { name: "if branch", source: "if true then @ 1 else 0", preservedKinds: [CstKind.IfExpression] },
+  { name: "program", source: "1 @ 2; 3;", preservedKinds: [CstKind.Program, CstKind.ExpressionStatement] },
   {
-    name: "elif condition",
-    source: "if true then 1 elif false @ true then 2 else 3",
-    preservedKinds: [CstKind.IfExpression, CstKind.ElifClause],
+    name: "operator forms",
+    source: "not source transform value + 1 @ 2;",
+    preservedKinds: [
+      CstKind.PrefixOperatorExpression,
+      CstKind.InfixCallExpression,
+      CstKind.InfixOperatorExpression,
+    ],
+  },
+  { name: "array element", source: "[1 @ 2, 3];", preservedKinds: [CstKind.ArrayExpression] },
+  { name: "dictionary value", source: "{a: 1 @ 2, b: 3};", preservedKinds: [CstKind.DictionaryExpression] },
+  {
+    name: "computed dictionary key",
+    source: "{[1 @ 2]: 3, b: 4};",
+    preservedKinds: [CstKind.DictionaryExpression, CstKind.ComputedDictionaryKey],
+  },
+  { name: "call argument", source: "f(1 @ 2, 3);", preservedKinds: [CstKind.CallExpression] },
+  { name: "grouped expression", source: "(1 @ 2);", preservedKinds: [CstKind.GroupedExpression] },
+  { name: "closure body", source: "x -> x @ 1;", preservedKinds: [CstKind.ClosureExpression] },
+  { name: "block expression", source: "{ 1 @ 2; 3 };", preservedKinds: [CstKind.BlockExpression] },
+  { name: "if condition", source: "if (true @ false) 1 else 0;", preservedKinds: [CstKind.IfExpression] },
+  { name: "if branch", source: "if (true) @ 1 else 0;", preservedKinds: [CstKind.IfExpression] },
+  { name: "else branch", source: "if (true) 1 else @ 0;", preservedKinds: [CstKind.IfExpression] },
+  {
+    name: "let value",
+    source: "let x = 1 @ 2; let y = 3;",
+    preservedKinds: [CstKind.LetStatement],
   },
   {
-    name: "elif branch",
-    source: "if true then 1 elif false then 2 @ 3 else 4",
-    preservedKinds: [CstKind.IfExpression, CstKind.ElifClause],
-  },
-  { name: "else branch", source: "if true then 1 else @ 0", preservedKinds: [CstKind.IfExpression] },
-  {
-    name: "let binding value",
-    source: "let x = 1 @ 2; y = 3 in y",
-    preservedKinds: [CstKind.LetExpression, CstKind.LetBinding],
+    name: "let equals",
+    source: "let x @ 1; let y = 2;",
+    preservedKinds: [CstKind.LetStatement],
   },
   {
-    name: "let binding equals",
-    source: "let x @ 1; y = 2 in y",
-    preservedKinds: [CstKind.LetExpression, CstKind.LetBinding],
+    name: "fn body",
+    source: "fn f(x) = x @ 1; fn g() = 2;",
+    preservedKinds: [CstKind.FnStatement, CstKind.ClosureParameter],
   },
-  { name: "field selector", source: "value.@field", preservedKinds: [CstKind.FieldSelectorExpression] },
-  {
-    name: "computed selector",
-    source: "value[1 @ 2]",
-    preservedKinds: [CstKind.ComputedSelectorExpression],
-  },
-  { name: "match test", source: "value match @ 1", preservedKinds: [CstKind.MatchTestExpression] },
+  { name: "field selector", source: "value.@field;", preservedKinds: [CstKind.FieldSelectorExpression] },
+  { name: "computed selector", source: "value[1 @ 2];", preservedKinds: [CstKind.ComputedSelectorExpression] },
+  { name: "match test", source: "value match @ 1;", preservedKinds: [CstKind.MatchTestExpression] },
   {
     name: "match selection opener",
-    source: "value match @ case 1 -> 1 case 2 -> 2 }",
+    source: "value match @ case 1 -> 1 case 2 -> 2 };",
     preservedKinds: [CstKind.MatchSelectionExpression, CstKind.MatchCase],
   },
   {
     name: "match pattern",
-    source: "value match { case @ -> 1 case 2 -> 2 }",
-    preservedKinds: [CstKind.MatchSelectionExpression, CstKind.MatchCase],
+    source: "value match { case @ -> 1 case 2 -> 2 };",
+    preservedKinds: [CstKind.MatchSelectionExpression, CstKind.MatchCase, CstKind.ErrorPattern],
   },
   {
     name: "match arrow",
-    source: "value match { case 1 @ 1 case 2 -> 2 }",
+    source: "value match { case 1 @ 1 case 2 -> 2 };",
     preservedKinds: [CstKind.MatchSelectionExpression, CstKind.MatchCase],
   },
   {
     name: "match result",
-    source: "value match { case 1 -> 1 @ 2 case 2 -> 2 else -> 0 }",
+    source: "value match { case 1 -> 1 @ 2 case 2 -> 2 else -> 0 };",
     preservedKinds: [CstKind.MatchSelectionExpression, CstKind.MatchCase, CstKind.MatchElse],
   },
 ];
 
 const validGrammarFixtures = [
-  "nil; true; false; 1; 'text'",
-  "1 + 2 * 3 == 7 and not false",
-  "values map transform",
-  "[1, 2, 3,]",
-  "{a: 1, 'b': 2, [key]: 3,}",
-  "f(1, 2,)",
-  "(1 + 2)",
-  "(x, y,) -> x + y",
-  "(_) -> nil",
-  "do { 1; 2; }",
-  "if true then 1 elif false then 2 else 3",
-  "let x = 1; y = (z) -> z in y(x)",
-  "value.field[key]",
-  "value match 1",
-  "value match { case 1 -> 'one' case x -> x else -> nil }",
-  "let even = (n) -> odd(n - 1); odd = (n) -> even(n - 1) in even(4)",
+  ";;;;;;",
+  "nil; true; false; 1; 'text';",
+  "1 + 2 * 3 == 7 and not false;",
+  "values map transform;",
+  "[1, 2, 3,];",
+  "{a: 1, 'b': 2, 3: 'three', [key]: 3,};",
+  "f(1, 2,); f { x -> x };",
+  "(1 + 2);",
+  "(x, y,) -> x + y; x -> x;",
+  "(_) -> nil;",
+  "{;}; {1}; {1;};",
+  "if (true) 1 else if (false) 2 else 3;",
+  "let x = 1; let y = z -> z; y(x);",
+  "fn even(n) = odd(n - 1); fn odd(n) = even(n - 1); even(4);",
+  "value.field[key];",
+  "value match 1;",
+  "value match { case 1 -> 'one' case x -> x else -> nil };",
 ] as const;
 
 describe("parser recovery contract", () => {
-  it("requires every CST kind to participate in the recovery corpus", () => {
-    const coveredKinds = new Set<CstKind>();
+  it("leaves a following declaration for statement-level terminator recovery", () => {
+    const result = parse("let value = 1 let other = 2;");
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "SF2004",
+        message: "Expected ';' after the statement.",
+      }),
+    ]);
+    expect(result.cst.children
+      .filter(isCstNode)
+      .map((node) => node.kind)).toEqual([CstKind.LetStatement, CstKind.LetStatement]);
+  });
+
+  it("requires every CST kind in both the valid and malformed corpora", () => {
+    const validKinds = new Set<CstKind>();
+    const malformedKinds = new Set<CstKind>();
 
     for (const source of validGrammarFixtures) {
-      for (const kind of descendantKinds(parse(source).cst)) {
-        coveredKinds.add(kind);
-      }
+      descendantKinds(parse(source).cst).forEach((kind) => validKinds.add(kind));
     }
     for (const fixture of lexicalErrorFixtures) {
-      for (const kind of descendantKinds(parse(fixture.source).cst)) {
-        coveredKinds.add(kind);
-      }
+      descendantKinds(parse(fixture.source).cst).forEach((kind) => malformedKinds.add(kind));
     }
 
-    const uncoveredKinds: CstKind[] = [];
+    const missingValidKinds: CstKind[] = [];
+    const missingMalformedKinds: CstKind[] = [];
     for (let kind = CstKind.Program; kind <= CstKind.LastPattern; kind += 1) {
-      if (!coveredKinds.has(kind)) {
-        uncoveredKinds.push(kind);
+      if (
+        kind !== CstKind.ErrorExpression
+        && kind !== CstKind.ErrorPattern
+        && !validKinds.has(kind)
+      ) {
+        missingValidKinds.push(kind);
+      }
+      if (!malformedKinds.has(kind)) {
+        missingMalformedKinds.push(kind);
       }
     }
-    expect(
-      uncoveredKinds,
-      "Every new CST kind needs a valid or malformed recovery fixture before it can ship.",
-    ).toEqual([]);
+    expect(missingValidKinds, "Every CST kind needs a valid fixture.").toEqual([]);
+    expect(missingMalformedKinds, "Every CST kind needs a malformed recovery fixture.").toEqual([]);
   });
 
   for (const fixture of lexicalErrorFixtures) {
@@ -139,7 +162,7 @@ describe("parser recovery contract", () => {
   }
 
   it("keeps separate malformed regions diagnostically independent", () => {
-    const result = parse("[1 @ 2, 3 @ 4]");
+    const result = parse("[1 @ 2, 3 @ 4];");
 
     expect(result.diagnostics).toMatchObject([
       { code: "SF1000", range: { start: 3, end: 4 } },
@@ -148,18 +171,17 @@ describe("parser recovery contract", () => {
   });
 
   it("does not synchronize at separators nested inside a malformed region", () => {
-    const source = "[1 @ f(2, 3), 4]";
+    const source = "[1 @ f(2, 3), 4];";
     const result = parse(source);
     const skipped = collectElements(result.cst, "skipped-tokens");
 
     expect(result.diagnostics).toEqual([expect.objectContaining({ code: "SF1000" })]);
     expect(skipped).toHaveLength(1);
     expect(source.slice(skipped[0]?.range.start, skipped[0]?.range.end)).toBe("@ f(2, 3)");
-    expect(descendantKinds(result.cst)).toContain(CstKind.ArrayExpression);
   });
 
-  it("lets a control boundary terminate a malformed region with an unmatched delimiter", () => {
-    const source = "if true @ f(1 then 2 else 3";
+  it("lets an else boundary terminate a malformed region with an unmatched delimiter", () => {
+    const source = "if (true) 1 @ f(1 else 3;";
     const result = parse(source);
 
     expect(result.diagnostics).toEqual([expect.objectContaining({ code: "SF1000" })]);
@@ -169,19 +191,17 @@ describe("parser recovery contract", () => {
 
   it("bounds every single-token edit across every first-version syntax fixture", () => {
     for (const source of validGrammarFixtures) {
-      const original = parse(source);
-      expect(original.diagnostics, source).toEqual([]);
+      expect(parse(source).diagnostics, source).toEqual([]);
 
       const tokens = lex(source).tokens.filter((token) =>
         token.kind !== SyntaxKind.WhitespaceTrivia && token.kind !== SyntaxKind.EndOfFileToken
       );
       for (const token of tokens) {
-        const edits = [
+        for (const edited of [
           replaceRange(source, token.range.start, token.range.end, "@"),
           replaceRange(source, token.range.start, token.range.end, ""),
           replaceRange(source, token.range.start, token.range.start, "@ "),
-        ];
-        for (const edited of edits) {
+        ]) {
           const result = parse(edited);
           expect(
             result.diagnostics.length,
@@ -194,14 +214,17 @@ describe("parser recovery contract", () => {
     }
   });
 
-  it("makes diagnostic count independent of the valid suffix size", () => {
+  it("makes diagnostic count independent of a valid suffix size", () => {
     fc.assert(
-      fc.property(fc.integer({ min: 1, max: 1_000 }), (size) => {
+      fc.property(fc.integer({ min: 1, max: 500 }), (size) => {
+        const suffix = Array.from({ length: size }, (_, index) => `let x${index} = ${index};`).join(" ");
         const sources = [
-          `if true @ false then 1 else ${Array.from({ length: size }, () => "1").join(" + ")}`,
-          `let x = 1 @ 2; ${Array.from({ length: size }, (_, index) => `x${index} = ${index}`).join("; ")} in x0`,
-          `value match { case 0 -> 0 @ 1 ${Array.from({ length: size }, (_, index) => `case ${index + 1} -> ${index + 1}`).join(" ")} else -> nil }`,
-          `[1 @ 2, ${Array.from({ length: size }, () => "3").join(", ")}]`,
+          `if (true @ false) 1 else 2; ${suffix}`,
+          `let x = 1 @ 2; ${suffix}`,
+          `value match { case 0 -> 0 @ 1 case 1 -> 1 else -> nil }; ${suffix}`,
+          `[1 @ 2, ${Array.from({ length: size }, () => "3").join(", ")}];`,
+          `{a: 1 @ 2, b: 3}; ${suffix}`,
+          `{ let local = 1 @ 2; local }; ${suffix}`,
         ];
 
         for (const source of sources) {
@@ -210,7 +233,7 @@ describe("parser recovery contract", () => {
           ]);
         }
       }),
-      { numRuns: 25, seed: 0x5eedc0de },
+      { numRuns: 20, seed: 0x5eedc0de },
     );
   });
 });

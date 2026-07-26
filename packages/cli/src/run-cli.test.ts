@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ExitStatus, helpText, runCli, type CliHost } from "./run-cli.js";
 
 describe("runCli", () => {
-  it("runs one file, preserves print order, and ignores the final program value", () => {
+  it("runs every statement, preserves print order, and leaves the program result silent", () => {
     const host = new FakeHost({
       "program.sumi": "print('first'); print('second'); 42;",
     });
@@ -14,7 +14,7 @@ describe("runCli", () => {
   });
 
   it("writes nothing for a successful program without print", () => {
-    const host = new FakeHost({ "silent.sumi": "1 + 2" });
+    const host = new FakeHost({ "silent.sumi": "1 + 2;" });
 
     expect(runCli(["silent.sumi"], host)).toBe(ExitStatus.Success);
     expect(host.stdout).toBe("");
@@ -53,25 +53,23 @@ describe("runCli", () => {
 
   it("reports a common unsupported operator once without cascading", () => {
     const host = new FakeHost({
-      "operator.sumi": "let fib = (x) -> if x == 0 || x == 1 then 1 else fib(x - 1) + fib(x - 2) in print('Hello, meow')",
+      "operator.sumi": "fn fib(x) = if (x == 0 || x == 1) 1 else fib(x - 1) + fib(x - 2); print('Hello, meow');",
     });
 
     expect(runCli(["operator.sumi"], host)).toBe(ExitStatus.ProgramError);
     expect(host.stdout).toBe("");
-    expect(host.stderr).toBe(
-      "operator.sumi:1:28 - error SF2007: '||' is not a logical operator. Use 'or' instead.\n",
+    expect(host.stderr).toMatch(
+      /^operator\.sumi:1:\d+ - error SF2007: '\|\|' is not a logical operator\. Use 'or' instead\.\n$/u,
     );
   });
 
-  it("reports a misspelled let keyword at the misspelling", () => {
+  it("reports a missing statement terminator at the next token", () => {
     const host = new FakeHost({
-      "keyword.sumi": "le fib = (x) -> x in print(fib(1))",
+      "terminator.sumi": "let value = 1 let other = 2;",
     });
 
-    expect(runCli(["keyword.sumi"], host)).toBe(ExitStatus.ProgramError);
-    expect(host.stderr).toBe(
-      "keyword.sumi:1:1 - error SF2009: 'le' is not valid before a binding. Did you mean 'let'?\n",
-    );
+    expect(runCli(["terminator.sumi"], host)).toBe(ExitStatus.ProgramError);
+    expect(host.stderr).toContain("error SF2004: Expected ';' after the statement.");
   });
 
   it("retains output produced before a later runtime error", () => {

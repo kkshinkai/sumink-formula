@@ -1,24 +1,22 @@
 import type {
-  ArrayExpression,
   BlockExpression,
   CallExpression,
   ClosureExpression,
-  ConditionalBranch,
+  DictionaryEntry,
   Expression,
+  FnStatement,
   IdentifierExpression,
-  IfExpression,
   InfixOperator,
   InfixOperatorExpression,
-  LetBinding,
-  LetExpression,
+  LetStatement,
+  LiteralExpression,
   LiteralValue,
   MatchCase,
   MatchSelectionExpression,
   NodeId,
-  ObjectKey,
-  ObjectMember,
   Pattern,
   Program,
+  Statement,
 } from "./ast.js";
 import { CstKind, type CstNode } from "./cst.js";
 import type { Diagnostic } from "./diagnostic.js";
@@ -54,7 +52,51 @@ class Lowerer {
       kind: "Program",
       id: this.#id(),
       range: node.range,
-      expressions: directNodes(node).filter(isExpressionCst).map((child) => this.#expression(child)),
+      statements: directNodes(node).flatMap((child) => {
+        const statement = this.#statement(child);
+        return statement === undefined ? [] : [statement];
+      }),
+    };
+  }
+
+  #statement(node: CstNode): Statement | undefined {
+    switch (node.kind) {
+      case CstKind.EmptyStatement:
+        return undefined;
+      case CstKind.LetStatement:
+        return {
+          kind: "LetStatement",
+          id: this.#id(),
+          range: node.range,
+          pattern: this.#requiredPattern(node, 0),
+          value: this.#requiredExpression(node, 0),
+        } satisfies LetStatement;
+      case CstKind.FnStatement:
+        return this.#fnStatement(node);
+      case CstKind.ExpressionStatement:
+        return {
+          kind: "ExpressionStatement",
+          id: this.#id(),
+          range: node.range,
+          expression: this.#requiredExpression(node, 0),
+        };
+      default:
+        return undefined;
+    }
+  }
+
+  #fnStatement(node: CstNode): FnStatement {
+    const name = requiredDirectToken(node, SyntaxKind.IdentifierToken);
+    return {
+      kind: "FnStatement",
+      id: this.#id(),
+      range: node.range,
+      name: name.value ?? "",
+      nameRange: name.range,
+      parameters: directNodes(node)
+        .filter((child) => child.kind === CstKind.ClosureParameter)
+        .map((parameter) => this.#requiredPattern(parameter, 0)),
+      body: this.#requiredExpression(node, 0),
     };
   }
 
@@ -63,7 +105,7 @@ class Lowerer {
       case CstKind.ErrorExpression:
         return { kind: "ErrorExpression", id: this.#id(), range: node.range };
       case CstKind.LiteralExpression:
-        return { kind: "LiteralExpression", id: this.#id(), range: node.range, value: literalValue(node) };
+        return this.#literal(node);
       case CstKind.IdentifierExpression:
         return this.#identifier(node);
       case CstKind.ArrayExpression:
@@ -72,15 +114,15 @@ class Lowerer {
           id: this.#id(),
           range: node.range,
           elements: directNodes(node).filter(isExpressionCst).map((child) => this.#expression(child)),
-        } satisfies ArrayExpression;
-      case CstKind.ObjectExpression:
+        };
+      case CstKind.DictionaryExpression:
         return {
-          kind: "ObjectExpression",
+          kind: "DictionaryExpression",
           id: this.#id(),
           range: node.range,
-          members: directNodes(node)
-            .filter((child) => child.kind === CstKind.ObjectMember)
-            .map((child) => this.#objectMember(child)),
+          entries: directNodes(node)
+            .filter((child) => child.kind === CstKind.DictionaryEntry)
+            .map((child) => this.#dictionaryEntry(child)),
         };
       case CstKind.CallExpression:
         return this.#call(node);
@@ -96,12 +138,7 @@ class Lowerer {
       case CstKind.ClosureExpression:
         return this.#closure(node);
       case CstKind.BlockExpression:
-        return {
-          kind: "BlockExpression",
-          id: this.#id(),
-          range: node.range,
-          expressions: directNodes(node).filter(isExpressionCst).map((child) => this.#expression(child)),
-        } satisfies BlockExpression;
+        return this.#block(node);
       case CstKind.IfExpression:
         return this.#ifExpression(node);
       case CstKind.PrefixOperatorExpression:
@@ -130,8 +167,6 @@ class Lowerer {
           receiver: this.#requiredExpression(node, 0),
           selector: this.#requiredExpression(node, 1),
         };
-      case CstKind.LetExpression:
-        return this.#letExpression(node);
       case CstKind.MatchTestExpression:
         return {
           kind: "MatchTestExpression",
@@ -147,6 +182,10 @@ class Lowerer {
     }
   }
 
+  #literal(node: CstNode): LiteralExpression {
+    return { kind: "LiteralExpression", id: this.#id(), range: node.range, value: literalValue(node) };
+  }
+
   #identifier(node: CstNode): IdentifierExpression {
     return {
       kind: "IdentifierExpression",
@@ -156,33 +195,35 @@ class Lowerer {
     };
   }
 
-  #objectMember(node: CstNode): ObjectMember {
-    const computed = directNodes(node).find((child) => child.kind === CstKind.ComputedObjectKey);
-    const key: ObjectKey = computed === undefined
-      ? this.#staticObjectKey(node)
-      : {
-          kind: "ComputedObjectKey",
-          expression: this.#requiredExpression(computed, 0),
-          range: computed.range,
-        };
-
+  #dictionaryEntry(node: CstNode): DictionaryEntry {
+    const computed = directNodes(node).find((child) => child.kind === CstKind.ComputedDictionaryKey);
     return {
-      kind: "ObjectMember",
+      kind: "DictionaryEntry",
       id: this.#id(),
       range: node.range,
-      key,
+      key: computed === undefined
+        ? this.#staticDictionaryKey(node)
+        : this.#requiredExpression(computed, 0),
       value: this.#requiredExpression(node, 0),
     };
   }
 
-  #staticObjectKey(node: CstNode): ObjectKey {
+  #staticDictionaryKey(node: CstNode): Expression {
     const token = directTokens(node).find((candidate) =>
-      candidate.kind === SyntaxKind.IdentifierToken || candidate.kind === SyntaxKind.StringLiteralToken
+      candidate.kind === SyntaxKind.IdentifierToken
+      || candidate.kind === SyntaxKind.StringLiteralToken
+      || candidate.kind === SyntaxKind.NumberLiteralToken
     );
+    if (token === undefined) {
+      return { kind: "ErrorExpression", id: this.#id(), range: node.range };
+    }
     return {
-      kind: "StaticObjectKey",
-      value: token?.value ?? "",
-      range: token?.range ?? node.range,
+      kind: "LiteralExpression",
+      id: this.#id(),
+      range: token.range,
+      value: token.kind === SyntaxKind.NumberLiteralToken
+        ? Number(token.value)
+        : token.value ?? "",
     };
   }
 
@@ -200,17 +241,16 @@ class Lowerer {
   #infixCall(node: CstNode): CallExpression {
     const expressions = directNodes(node).filter(isExpressionCst);
     const operator = requiredDirectToken(node, SyntaxKind.IdentifierToken);
-    const callee: IdentifierExpression = {
-      kind: "IdentifierExpression",
-      id: this.#id(),
-      range: operator.range,
-      name: operator.value ?? "",
-    };
     return {
       kind: "CallExpression",
       id: this.#id(),
       range: node.range,
-      callee,
+      callee: {
+        kind: "IdentifierExpression",
+        id: this.#id(),
+        range: operator.range,
+        name: operator.value ?? "",
+      },
       arguments: [
         this.#expressionOrError(expressions[0], node.range),
         this.#expressionOrError(expressions[1], node.range),
@@ -219,44 +259,40 @@ class Lowerer {
   }
 
   #closure(node: CstNode): ClosureExpression {
-    const parameters = directNodes(node)
-      .filter((child) => child.kind === CstKind.ClosureParameter)
-      .map((parameter) => this.#requiredPattern(parameter, 0));
     const body = directNodes(node).findLast(isExpressionCst);
     return {
       kind: "ClosureExpression",
       id: this.#id(),
       range: node.range,
-      parameters,
+      parameters: directNodes(node)
+        .filter((child) => child.kind === CstKind.ClosureParameter)
+        .map((parameter) => this.#requiredPattern(parameter, 0)),
       body: this.#expressionOrError(body, node.range),
     };
   }
 
-  #ifExpression(node: CstNode): IfExpression {
-    const expressions = directNodes(node).filter(isExpressionCst);
-    const branches: ConditionalBranch[] = [];
-    branches.push({
-      condition: this.#expressionOrError(expressions[0], node.range),
-      result: this.#expressionOrError(expressions[1], node.range),
-      range: spanNodes(expressions[0], expressions[1], node.range),
+  #block(node: CstNode): BlockExpression {
+    const statements = directNodes(node).flatMap((child) => {
+      const statement = this.#statement(child);
+      return statement === undefined ? [] : [statement];
     });
+    const resultNode = directNodes(node).findLast(isExpressionCst);
+    const base = { kind: "BlockExpression" as const, id: this.#id(), range: node.range, statements };
+    return resultNode === undefined ? base : { ...base, result: this.#expression(resultNode) };
+  }
 
-    for (const clause of directNodes(node).filter((child) => child.kind === CstKind.ElifClause)) {
-      const clauseExpressions = directNodes(clause).filter(isExpressionCst);
-      branches.push({
-        condition: this.#expressionOrError(clauseExpressions[0], clause.range),
-        result: this.#expressionOrError(clauseExpressions[1], clause.range),
-        range: clause.range,
-      });
-    }
-
-    return {
-      kind: "IfExpression",
+  #ifExpression(node: CstNode): Expression {
+    const expressions = directNodes(node).filter(isExpressionCst);
+    const base = {
+      kind: "IfExpression" as const,
       id: this.#id(),
       range: node.range,
-      branches,
-      elseBranch: this.#expressionOrError(expressions[2], node.range),
+      condition: this.#expressionOrError(expressions[0], node.range),
+      consequent: this.#expressionOrError(expressions[1], node.range),
     };
+    return expressions[2] === undefined
+      ? base
+      : { ...base, alternative: this.#expression(expressions[2]) };
   }
 
   #infixOperator(node: CstNode): InfixOperatorExpression {
@@ -267,26 +303,6 @@ class Lowerer {
       operator: requiredInfixOperator(node),
       left: this.#requiredExpression(node, 0),
       right: this.#requiredExpression(node, 1),
-    };
-  }
-
-  #letExpression(node: CstNode): LetExpression {
-    const bindings = directNodes(node)
-      .filter((child) => child.kind === CstKind.LetBinding)
-      .map((binding): LetBinding => ({
-        kind: "LetBinding",
-        id: this.#id(),
-        range: binding.range,
-        pattern: this.#requiredPattern(binding, 0),
-        value: this.#requiredExpression(binding, 0),
-      }));
-    const body = directNodes(node).findLast(isExpressionCst);
-    return {
-      kind: "LetExpression",
-      id: this.#id(),
-      range: node.range,
-      bindings,
-      body: this.#expressionOrError(body, node.range),
     };
   }
 
@@ -360,10 +376,7 @@ function directTokens(node: CstNode): SyntaxToken[] {
 
 function requiredDirectToken(node: CstNode, kind: SyntaxToken["kind"]): SyntaxToken {
   const token = directTokens(node).find((candidate) => candidate.kind === kind);
-  if (token === undefined) {
-    return { type: "token", kind, range: node.range, flags: 0 };
-  }
-  return token;
+  return token ?? { type: "token", kind, range: node.range, flags: 0 };
 }
 
 function literalValue(node: CstNode): LiteralValue {
@@ -433,10 +446,4 @@ function isExpressionCst(node: CstNode): boolean {
 
 function isPatternCst(node: CstNode): boolean {
   return node.kind >= CstKind.FirstPattern && node.kind <= CstKind.LastPattern;
-}
-
-function spanNodes(first: CstNode | undefined, second: CstNode | undefined, fallback: TextRange): TextRange {
-  return first === undefined || second === undefined
-    ? fallback
-    : { start: first.range.start, end: second.range.end };
 }

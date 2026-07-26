@@ -1,0 +1,18 @@
+fn even(number) = if (number == 0) true else odd(number - 1);
+fn odd(number) = if (number == 0) false else even(number - 1);
+
+fn phaseA(steps) = if (steps == 0) "A" else phaseB(steps - 1);
+fn phaseB(steps) = if (steps == 0) "B" else phaseC(steps - 1);
+fn phaseC(steps) = if (steps == 0) "C" else phaseA(steps - 1);
+
+print(even(42));
+print(odd(17));
+print(phaseA(8));
+
+let escaped = {
+  fn left(steps) = if (steps == 0) "left" else right(steps - 1);
+  fn right(steps) = if (steps == 0) "right" else left(steps - 1);
+  left
+};
+
+print(escaped(5));

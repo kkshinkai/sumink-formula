@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import type { Expression, NodeId, Pattern, Program } from "./ast.js";
+import type { Expression, NodeId, Pattern, Program, Statement } from "./ast.js";
 import type { CstNode } from "./cst.js";
 import { analyze } from "./interpreter.js";
 import { parse } from "./parser.js";
@@ -10,29 +10,33 @@ import type { SyntaxToken } from "./token.js";
 
 describe("grammar conformance", () => {
   it.each([
+    ["empty statements", ";;;;;;"],
     ["literal expressions", "nil; true; false; 0; 42; 3.14; 1e6; 1E-6; 'text'; \"text\";"],
     ["array expressions", "[]; [1]; [1, 2, 3,];"],
-    ["object expressions", "{}; {name: 'Ada'}; {'name': 1, [key]: 2,};"],
+    ["dictionary expressions", "{}; {name: 'Ada'}; {'name': 1, 2: 'two', [key]: 2,};"],
     ["ordinary calls", "function(); function(1); function(1, 2,);"],
-    ["infix calls", "source transform closure map mapper"],
-    ["grouped expressions", "(1 + 2) * 3"],
-    ["closures", "() -> nil; (value) -> value; (1, _, name,) -> name;"],
-    ["blocks", "do {}; do {1}; do {1; 2;};"],
-    ["conditionals", "if a then b elif c then d elif e then f else g"],
-    ["operators", "not false or -1 + 2 * 3 <= 8 and 4 != 5"],
-    ["selectors", "root.field[index][2].leaf"],
-    ["let groups", "let first = 1; second = () -> first in second()"],
+    ["trailing brace calls", "function {}; function {;}; function { x -> x };"],
+    ["infix calls", "source transform closure map mapper;"],
+    ["grouped expressions", "(1 + 2) * 3;"],
+    ["closures", "() -> nil; value -> value; (value) -> value; (1, _, name,) -> name;"],
+    ["blocks", "{;}; {;;;;}; {1}; {1;}; {let x = 1; x};"],
+    ["conditionals", "if (a) b; if (a) b else if (c) d else e;"],
+    ["operators", "not false or -1 + 2 * 3 <= 8 and 4 != 5;"],
+    ["selectors", "root.field[index][2].leaf;"],
+    ["let statements", "let first = 1; let second = () -> first; second();"],
+    ["fn statements", "fn first(x) = second(x); fn second(x) = x; first(1);"],
     ["match tests", "value match 1; value match _;"],
-    ["match selections", "value match { case 0 -> 'zero' case x -> x else -> nil }"],
+    ["match selections", "value match { case 0 -> 'zero' case x -> x else -> nil };"],
   ])("accepts every approved %s form", (_description, source) => {
     expect(analyze(source).diagnostics).toEqual([]);
   });
 
   it("assigns every semantic node exactly one unique identity", () => {
-    const analysis = analyze(
-      "let make = (x) -> () -> x; value = make(input) in "
-      + "value() match { case 0 -> {kind: 'zero'} case n -> {[kind]: n} }",
-    );
+    const analysis = analyze([
+      "let make = x -> () -> x;",
+      "let value = make(input);",
+      "value() match { case 0 -> {kind: 'zero'} case n -> {[kind]: n} };",
+    ].join(" "));
     const ids = collectNodeIds(analysis.program);
 
     expect(analysis.diagnostics).toEqual([]);
@@ -67,8 +71,25 @@ describe("grammar conformance", () => {
 
 function collectNodeIds(program: Program): NodeId[] {
   const ids: NodeId[] = [program.id];
-  program.expressions.forEach((expression) => collectExpression(expression, ids));
+  program.statements.forEach((statement) => collectStatement(statement, ids));
   return ids;
+}
+
+function collectStatement(statement: Statement, ids: NodeId[]): void {
+  ids.push(statement.id);
+  switch (statement.kind) {
+    case "LetStatement":
+      collectPattern(statement.pattern, ids);
+      collectExpression(statement.value, ids);
+      return;
+    case "FnStatement":
+      statement.parameters.forEach((pattern) => collectPattern(pattern, ids));
+      collectExpression(statement.body, ids);
+      return;
+    case "ExpressionStatement":
+      collectExpression(statement.expression, ids);
+      return;
+  }
 }
 
 function collectExpression(expression: Expression, ids: NodeId[]): void {
@@ -81,13 +102,11 @@ function collectExpression(expression: Expression, ids: NodeId[]): void {
     case "ArrayExpression":
       expression.elements.forEach((child) => collectExpression(child, ids));
       return;
-    case "ObjectExpression":
-      expression.members.forEach((member) => {
-        ids.push(member.id);
-        if (member.key.kind === "ComputedObjectKey") {
-          collectExpression(member.key.expression, ids);
-        }
-        collectExpression(member.value, ids);
+    case "DictionaryExpression":
+      expression.entries.forEach((entry) => {
+        ids.push(entry.id);
+        collectExpression(entry.key, ids);
+        collectExpression(entry.value, ids);
       });
       return;
     case "CallExpression":
@@ -102,14 +121,17 @@ function collectExpression(expression: Expression, ids: NodeId[]): void {
       collectExpression(expression.body, ids);
       return;
     case "BlockExpression":
-      expression.expressions.forEach((child) => collectExpression(child, ids));
+      expression.statements.forEach((statement) => collectStatement(statement, ids));
+      if (expression.result !== undefined) {
+        collectExpression(expression.result, ids);
+      }
       return;
     case "IfExpression":
-      expression.branches.forEach((branch) => {
-        collectExpression(branch.condition, ids);
-        collectExpression(branch.result, ids);
-      });
-      collectExpression(expression.elseBranch, ids);
+      collectExpression(expression.condition, ids);
+      collectExpression(expression.consequent, ids);
+      if (expression.alternative !== undefined) {
+        collectExpression(expression.alternative, ids);
+      }
       return;
     case "PrefixOperatorExpression":
       collectExpression(expression.operand, ids);
@@ -124,14 +146,6 @@ function collectExpression(expression: Expression, ids: NodeId[]): void {
     case "ComputedSelectorExpression":
       collectExpression(expression.receiver, ids);
       collectExpression(expression.selector, ids);
-      return;
-    case "LetExpression":
-      expression.bindings.forEach((binding) => {
-        ids.push(binding.id);
-        collectPattern(binding.pattern, ids);
-        collectExpression(binding.value, ids);
-      });
-      collectExpression(expression.body, ids);
       return;
     case "MatchTestExpression":
       collectExpression(expression.subject, ids);
@@ -171,23 +185,20 @@ function reconstructCst(node: CstNode, source: string): string {
         .map((token) => source.slice(token.range.start, token.range.end))
         .join("");
     }
-    if (child.type === "token" && child.kind !== SyntaxKind.EndOfFileToken) {
-      return source.slice(child.range.start, child.range.end);
-    }
-    return "";
+    return child.type === "token" && child.kind !== SyntaxKind.EndOfFileToken
+      ? source.slice(child.range.start, child.range.end)
+      : "";
   }).join("");
 }
 
 function flattenCstTokens(node: CstNode): SyntaxToken[] {
-  const tokens: SyntaxToken[] = [];
-  for (const child of node.children) {
+  return node.children.flatMap((child): SyntaxToken[] => {
     if (child.type === "node") {
-      tokens.push(...flattenCstTokens(child));
-    } else if (child.type === "skipped-tokens") {
-      tokens.push(...child.tokens);
-    } else if (child.type === "token") {
-      tokens.push(child);
+      return flattenCstTokens(child);
     }
-  }
-  return tokens;
+    if (child.type === "skipped-tokens") {
+      return [...child.tokens];
+    }
+    return child.type === "token" ? [child] : [];
+  });
 }

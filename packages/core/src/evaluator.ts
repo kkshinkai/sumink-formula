@@ -1,11 +1,14 @@
 import type {
   ClosureExpression,
   Expression,
+  FnStatement,
   InfixOperator,
   MatchSelectionExpression,
+  NodeId,
   Pattern,
   PrefixOperator,
   Program,
+  Statement,
 } from "./ast.js";
 import {
   diagnostic,
@@ -17,16 +20,17 @@ import type { BindingId, Resolution } from "./resolver.js";
 import {
   arrayValue,
   callableState,
-  getObjectField,
+  dictionaryValue,
+  getDictionaryEntry,
   isArrayValue,
+  isDictionaryValue,
   isFunctionValue,
-  isObjectValue,
   isRuntimeValue,
-  objectValue,
   registerClosure,
+  runtimeEquals,
   type FunctionValue,
   type NativeFunctionImplementation,
-  type ObjectField,
+  type RuntimeDictionaryEntry,
   type RuntimeValue,
 } from "./runtime-value.js";
 import type { TextRange } from "./text.js";
@@ -87,11 +91,20 @@ class Slot {
 
 class Environment {
   readonly #parent: Environment | undefined;
-  readonly #slots: ReadonlyMap<BindingId, Slot>;
+  readonly #slots: Map<BindingId, Slot>;
 
-  public constructor(parent?: Environment, slots: ReadonlyMap<BindingId, Slot> = new Map()) {
+  public constructor(parent?: Environment, slots: Map<BindingId, Slot> = new Map()) {
     this.#parent = parent;
     this.#slots = slots;
+  }
+
+  public define(bindingId: BindingId): Slot {
+    if (this.#slots.has(bindingId)) {
+      throw new Error("A runtime slot cannot be defined twice in one environment.");
+    }
+    const slot = new Slot();
+    this.#slots.set(bindingId, slot);
+    return slot;
   }
 
   public slot(bindingId: BindingId): Slot | undefined {
@@ -101,7 +114,8 @@ class Environment {
 
 interface ClosureState {
   readonly kind: "closure";
-  readonly expression: ClosureExpression;
+  readonly parameters: readonly Pattern[];
+  readonly body: Expression;
   readonly environment: Environment;
   readonly resolution: Resolution;
   readonly globals: ReadonlyMap<string, RuntimeValue>;
@@ -145,12 +159,8 @@ class Evaluator {
 
   public evaluate(program: Program): EvaluationResult {
     try {
-      const root = new Environment();
-      let result: RuntimeValue = null;
-      for (const expression of program.expressions) {
-        result = this.#expression(expression, root);
-      }
-      return { ok: true, value: result, usedDependencies: this.#usedDependencies };
+      this.#scope(program.statements);
+      return { ok: true, value: null, usedDependencies: this.#usedDependencies };
     } catch (error: unknown) {
       if (error instanceof EvaluationFailure) {
         return { ok: false, diagnostic: error.diagnostic, usedDependencies: this.#usedDependencies };
@@ -166,6 +176,63 @@ class Evaluator {
         usedDependencies: this.#usedDependencies,
       };
     }
+  }
+
+  #scope(
+    statements: readonly Statement[],
+    parent?: Environment,
+    result?: Expression,
+  ): RuntimeValue {
+    const environment = new Environment(parent);
+
+    for (const statement of statements) {
+      if (statement.kind === "FnStatement") {
+        this.#allocateBinding(statement.id, environment);
+      } else if (statement.kind === "LetStatement") {
+        this.#allocatePattern(statement.pattern, environment);
+      }
+    }
+    for (const statement of statements) {
+      if (statement.kind === "FnStatement") {
+        this.#initializeFunction(statement, environment);
+      }
+    }
+
+    for (const statement of statements) {
+      this.#statement(statement, environment);
+    }
+    return result === undefined ? null : this.#expression(result, environment);
+  }
+
+  #statement(statement: Statement, environment: Environment): void {
+    switch (statement.kind) {
+      case "LetStatement": {
+        const value = this.#expression(statement.value, environment);
+        if (!this.#matchAndBind(statement.pattern, value, environment)) {
+          this.#fail("SF4007", "Let binding pattern did not match its value.", statement.pattern.range);
+        }
+        return;
+      }
+      case "FnStatement":
+        return;
+      case "ExpressionStatement":
+        this.#expression(statement.expression, environment);
+        return;
+    }
+  }
+
+  #initializeFunction(statement: FnStatement, environment: Environment): void {
+    const bindingId = this.#resolution.bindings.get(statement.id);
+    const slot = bindingId === undefined ? undefined : environment.slot(bindingId);
+    if (slot === undefined) {
+      this.#fail("SF4004", "Resolved function binding has no runtime slot.", statement.nameRange);
+    }
+    slot.initialize(this.#closureValue(
+      statement.parameters,
+      statement.body,
+      environment,
+      statement.name,
+    ));
   }
 
   #expression(expression: Expression, environment: Environment): RuntimeValue {
@@ -220,7 +287,7 @@ class Evaluator {
         if (!slot.initialized) {
           return this.#fail(
             "SF4005",
-            "A recursive let binding was read before it was initialized.",
+            "A lexical binding was read before it was initialized.",
             expression.range,
           );
         }
@@ -228,15 +295,13 @@ class Evaluator {
       }
       case "ArrayExpression":
         return arrayValue(expression.elements.map((element) => this.#expression(element, environment)));
-      case "ObjectExpression": {
-        const fields: ObjectField[] = [];
-        for (const member of expression.members) {
-          const key = member.key.kind === "StaticObjectKey"
-            ? member.key.value
-            : this.#objectKey(this.#expression(member.key.expression, environment), member.key.range);
-          fields.push({ key, value: this.#expression(member.value, environment) });
+      case "DictionaryExpression": {
+        const entries: RuntimeDictionaryEntry[] = [];
+        for (const entry of expression.entries) {
+          const key = this.#expression(entry.key, environment);
+          entries.push({ key, value: this.#expression(entry.value, environment) });
         }
-        return objectValue(fields);
+        return dictionaryValue(entries);
       }
       case "CallExpression": {
         const callee = this.#expression(expression.callee, environment);
@@ -247,24 +312,20 @@ class Evaluator {
         return this.#expression(expression.expression, environment);
       case "ClosureExpression":
         return this.#closure(expression, environment);
-      case "BlockExpression": {
-        let value: RuntimeValue = null;
-        for (const child of expression.expressions) {
-          value = this.#expression(child, environment);
+      case "BlockExpression":
+        return this.#scope(expression.statements, environment, expression.result);
+      case "IfExpression": {
+        const condition = this.#requireBoolean(
+          this.#expression(expression.condition, environment),
+          expression.condition.range,
+        );
+        if (condition) {
+          return this.#expression(expression.consequent, environment);
         }
-        return value;
+        return expression.alternative === undefined
+          ? null
+          : this.#expression(expression.alternative, environment);
       }
-      case "IfExpression":
-        for (const branch of expression.branches) {
-          const condition = this.#requireBoolean(
-            this.#expression(branch.condition, environment),
-            branch.condition.range,
-          );
-          if (condition) {
-            return this.#expression(branch.result, environment);
-          }
-        }
-        return this.#expression(expression.elseBranch, environment);
       case "PrefixOperatorExpression":
         return this.#prefix(
           expression.operator,
@@ -275,10 +336,10 @@ class Evaluator {
         return this.#infix(expression.operator, expression.left, expression.right, environment, expression.range);
       case "FieldSelectorExpression": {
         const receiver = this.#expression(expression.receiver, environment);
-        if (!isObjectValue(receiver)) {
-          return this.#fail("SF4006", "Field selection requires an object value.", expression.receiver.range);
+        if (!isDictionaryValue(receiver)) {
+          return this.#fail("SF4006", "Field selection requires a dictionary value.", expression.receiver.range);
         }
-        return getObjectField(receiver, expression.field) ?? null;
+        return getDictionaryEntry(receiver, expression.field) ?? null;
       }
       case "ComputedSelectorExpression":
         return this.#select(
@@ -286,20 +347,6 @@ class Evaluator {
           this.#expression(expression.selector, environment),
           expression.range,
         );
-      case "LetExpression": {
-        const slots = new Map<BindingId, Slot>();
-        for (const binding of expression.bindings) {
-          this.#allocatePattern(binding.pattern, slots);
-        }
-        const recursiveEnvironment = new Environment(environment, slots);
-        for (const binding of expression.bindings) {
-          const value = this.#expression(binding.value, recursiveEnvironment);
-          if (!this.#matchAndBind(binding.pattern, value, recursiveEnvironment)) {
-            return this.#fail("SF4007", "Let binding pattern did not match its value.", binding.pattern.range);
-          }
-        }
-        return this.#expression(expression.body, recursiveEnvironment);
-      }
       case "MatchTestExpression": {
         const subject = this.#expression(expression.subject, environment);
         return this.#matches(expression.pattern, subject);
@@ -310,13 +357,24 @@ class Evaluator {
   }
 
   #closure(expression: ClosureExpression, environment: Environment): FunctionValue {
+    return this.#closureValue(expression.parameters, expression.body, environment);
+  }
+
+  #closureValue(
+    parameters: readonly Pattern[],
+    body: Expression,
+    environment: Environment,
+    name?: string,
+  ): FunctionValue {
     const value: FunctionValue = Object.freeze({
       kind: "function",
-      arity: expression.parameters.length,
+      ...(name === undefined ? {} : { name }),
+      arity: parameters.length,
     });
     registerClosure(value, Object.freeze({
       kind: "closure",
-      expression,
+      parameters,
+      body,
       environment,
       resolution: this.#resolution,
       globals: this.#globals,
@@ -370,15 +428,15 @@ class Evaluator {
       this.#trackExternalDependencies = closure.owner === this.#evaluationOwner;
       try {
         const slots = new Map<BindingId, Slot>();
-        closure.expression.parameters.forEach((parameter) => this.#allocatePattern(parameter, slots));
+        closure.parameters.forEach((parameter) => this.#allocatePatternInto(parameter, slots));
         const callEnvironment = new Environment(closure.environment, slots);
-        for (let index = 0; index < closure.expression.parameters.length; index += 1) {
-          const parameter = closure.expression.parameters[index];
+        for (let index = 0; index < closure.parameters.length; index += 1) {
+          const parameter = closure.parameters[index];
           if (parameter === undefined || !this.#matchAndBind(parameter, arguments_[index] ?? null, callEnvironment)) {
             return this.#fail("SF4011", `Argument ${index + 1} did not match its parameter pattern.`, range);
           }
         }
-        return this.#expression(closure.expression.body, callEnvironment);
+        return this.#expression(closure.body, callEnvironment);
       } finally {
         this.#resolution = previousResolution;
         this.#globals = previousGlobals;
@@ -510,20 +568,17 @@ class Evaluator {
       }
       return receiver.elements[selector] ?? null;
     }
-    if (isObjectValue(receiver)) {
-      if (typeof selector !== "string" && (typeof selector !== "number" || !Number.isFinite(selector))) {
-        return this.#fail("SF4017", "Object selection requires a string or finite number key.", range);
-      }
-      return getObjectField(receiver, String(selector)) ?? null;
+    if (isDictionaryValue(receiver)) {
+      return getDictionaryEntry(receiver, selector) ?? null;
     }
-    return this.#fail("SF4018", "Computed selection requires an array or object value.", range);
+    return this.#fail("SF4018", "Computed selection requires an array or dictionary value.", range);
   }
 
   #matchSelection(expression: MatchSelectionExpression, environment: Environment): RuntimeValue {
     const subject = this.#expression(expression.subject, environment);
     for (const matchCase of expression.cases) {
       const slots = new Map<BindingId, Slot>();
-      this.#allocatePattern(matchCase.pattern, slots);
+      this.#allocatePatternInto(matchCase.pattern, slots);
       const caseEnvironment = new Environment(environment, slots);
       if (this.#matchAndBind(matchCase.pattern, subject, caseEnvironment)) {
         return this.#expression(matchCase.result, caseEnvironment);
@@ -535,7 +590,24 @@ class Evaluator {
     return this.#fail("SF4019", "No match case accepted the value.", expression.range);
   }
 
-  #allocatePattern(pattern: Pattern, slots: Map<BindingId, Slot>): void {
+  #allocateBinding(nodeId: NodeId, environment: Environment): void {
+    const bindingId = this.#resolution.bindings.get(nodeId);
+    if (bindingId !== undefined) {
+      environment.define(bindingId);
+    }
+  }
+
+  #allocatePattern(pattern: Pattern, environment: Environment): void {
+    if (pattern.kind !== "IdentifierPattern") {
+      return;
+    }
+    const bindingId = this.#resolution.bindings.get(pattern.id);
+    if (bindingId !== undefined) {
+      environment.define(bindingId);
+    }
+  }
+
+  #allocatePatternInto(pattern: Pattern, slots: Map<BindingId, Slot>): void {
     if (pattern.kind !== "IdentifierPattern") {
       return;
     }
@@ -573,16 +645,6 @@ class Evaluator {
       case "ErrorPattern":
         return false;
     }
-  }
-
-  #objectKey(value: RuntimeValue, range: TextRange): string {
-    if (typeof value === "string") {
-      return value;
-    }
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return String(value);
-    }
-    return this.#fail("SF4020", "A computed object key must be a string or finite number.", range);
   }
 
   #requireNumber(value: RuntimeValue, range: TextRange): number {
@@ -648,76 +710,8 @@ function isNativeCallable(state: object): state is { readonly kind: "native"; re
 
 function isClosureState(state: object): state is ClosureState {
   return "kind" in state && state.kind === "closure"
-    && "expression" in state && "environment" in state
+    && "parameters" in state && "body" in state && "environment" in state
     && "resolution" in state && "globals" in state && "owner" in state;
-}
-
-function runtimeEquals(left: RuntimeValue, right: RuntimeValue): boolean {
-  const work: Array<readonly [RuntimeValue, RuntimeValue]> = [[left, right]];
-  const compared = new WeakMap<object, WeakSet<object>>();
-
-  while (work.length > 0) {
-    const pair = work.pop();
-    if (pair === undefined) {
-      continue;
-    }
-    const [leftValue, rightValue] = pair;
-    if (leftValue === rightValue) {
-      continue;
-    }
-    if (isArrayValue(leftValue) && isArrayValue(rightValue)) {
-      if (alreadyCompared(leftValue, rightValue, compared)) {
-        continue;
-      }
-      if (leftValue.elements.length !== rightValue.elements.length) {
-        return false;
-      }
-      for (let index = 0; index < leftValue.elements.length; index += 1) {
-        const leftElement = leftValue.elements[index];
-        const rightElement = rightValue.elements[index];
-        if (leftElement === undefined || rightElement === undefined) {
-          return false;
-        }
-        work.push([leftElement, rightElement]);
-      }
-      continue;
-    }
-    if (isObjectValue(leftValue) && isObjectValue(rightValue)) {
-      if (alreadyCompared(leftValue, rightValue, compared)) {
-        continue;
-      }
-      if (leftValue.fields.length !== rightValue.fields.length) {
-        return false;
-      }
-      const rightFields = new Map(rightValue.fields.map((field) => [field.key, field.value]));
-      for (const field of leftValue.fields) {
-        if (!rightFields.has(field.key)) {
-          return false;
-        }
-        work.push([field.value, rightFields.get(field.key) ?? null]);
-      }
-      continue;
-    }
-    return false;
-  }
-  return true;
-}
-
-function alreadyCompared(
-  left: object,
-  right: object,
-  compared: WeakMap<object, WeakSet<object>>,
-): boolean {
-  const rights = compared.get(left);
-  if (rights?.has(right) === true) {
-    return true;
-  }
-  if (rights === undefined) {
-    compared.set(left, new WeakSet([right]));
-  } else {
-    rights.add(right);
-  }
-  return false;
 }
 
 function comparePrimitive<T extends number | string>(

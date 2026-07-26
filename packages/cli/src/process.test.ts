@@ -21,6 +21,31 @@ afterAll(() => {
 });
 
 describe("built sumi process", () => {
+  it.each([
+    ["hello.sumi", "Hello, world!\n"],
+    ["closures.sumi", "44\n100\n"],
+    ["mutual-recursion.sumi", "true\ntrue\nC\nright\n"],
+    [
+      "tree-processing.sumi",
+      "16\n"
+      + "{\"kind\": \"branch\", \"left\": {\"kind\": \"branch\", \"left\": "
+      + "{\"kind\": \"leaf\", \"value\": 30}, \"right\": {\"kind\": \"leaf\", \"value\": 50}}, "
+      + "\"right\": {\"kind\": \"leaf\", \"value\": 80}}\n",
+    ],
+    [
+      "dictionary-keys.sumi",
+      "array key\ndictionary key\nboolean key\nnil\n"
+      + "{[[1, {\"name\": \"Ada\"}]]: \"new\", \"middle\": 0}\nsame closure\nnil\n",
+    ],
+    ["trailing-blocks.sumi", "42\nyes\nAda\nnil\n{}\n"],
+  ])("runs the repository example %s", (name, expectedOutput) => {
+    const result = runNodeCli([join(workspaceRoot, "examples", name)]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(expectedOutput);
+    expect(result.stderr).toBe("");
+  });
+
   it("runs a Unicode path and preserves stdout exactly", () => {
     const file = writeSource("program with 墨.sumi", "print('Hello, world!'); print(42);");
     const result = runNodeCli([file]);
@@ -30,7 +55,7 @@ describe("built sumi process", () => {
     expect(result.stderr).toBe("");
   });
 
-  it("keeps successful return values silent", () => {
+  it("keeps successful programs without print silent", () => {
     const file = writeSource("silent.sumi", "1 + 2;");
     const result = runNodeCli([file]);
 
@@ -39,13 +64,23 @@ describe("built sumi process", () => {
     expect(result.stderr).toBe("");
   });
 
-  it("reports syntax and runtime failures through the built executable", () => {
+  it("reports front-end and runtime failures through the built executable", () => {
+    const lexicalFile = writeSource("lexical.sumi", "@;");
+    const lexicalResult = runNodeCli([lexicalFile]);
+    expect(lexicalResult.status).toBe(1);
+    expect(lexicalResult.stderr).toContain(`${lexicalFile}:1:1 - error SF1000:`);
+
     const syntaxFile = writeSource("syntax.sumi", "(");
     const syntaxResult = runNodeCli([syntaxFile]);
     expect(syntaxResult.status).toBe(1);
     expect(syntaxResult.stderr).toContain(`${syntaxFile}:1:2 - error SF`);
 
-    const runtimeFile = writeSource("runtime.sumi", "missing");
+    const resolverFile = writeSource("resolver.sumi", "let value = 1; let value = 2;");
+    const resolverResult = runNodeCli([resolverFile]);
+    expect(resolverResult.status).toBe(1);
+    expect(resolverResult.stderr).toContain(`${resolverFile}:1:20 - error SF3000:`);
+
+    const runtimeFile = writeSource("runtime.sumi", "missing;");
     const runtimeResult = runNodeCli([runtimeFile]);
     expect(runtimeResult.status).toBe(1);
     expect(runtimeResult.stderr).toContain(`${runtimeFile}:1:1 - error SF4003:`);

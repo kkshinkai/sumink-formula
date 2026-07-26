@@ -1,7 +1,8 @@
 # Closure expressions
 
 ```text
-ClosureExpression = "(" ClosureParameters? ")" "->" Expression
+ClosureExpression = Pattern "->" Expression
+                  | "(" ClosureParameters? ")" "->" Expression
 ClosureParameters = Pattern ("," Pattern)* ","?
 ```
 
@@ -13,9 +14,14 @@ same binding, even if the caller has a binding with the same spelling.
 This expression evaluates to `1`:
 
 ```sumi
-let x = 1;
-    f = () -> x
-in let x = 2 in f()
+{
+  let x = 1;
+  let f = () -> x;
+  {
+    let x = 2;
+    f()
+  }
+}
 ```
 
 The `x` used by `f` is the binding visible where the closure was created, not
@@ -35,5 +41,5 @@ its local bindings and that evaluation's external bindings. It does not resolve
 captured names again in the environment of a later caller.
 
 A closure expression does not by itself give the function a binding through
-which it can call itself. Recursion is established by placing the closure in a
-recursive [`let` group](./let-expressions.md).
+which it can call itself. A recursive named closure is declared by an
+[`fn` statement](../statements/fn-statements.md).

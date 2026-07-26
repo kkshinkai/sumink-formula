@@ -9,7 +9,8 @@
   },
   "scripts": {
     "build": "pnpm --filter @sumink-formula/core run build && pnpm --filter @sumink-formula/cli run build",
-    "check": "pnpm run build && pnpm run typecheck:packages && pnpm run test:packages",
+    "check": "pnpm run clean && pnpm run build && pnpm run typecheck:packages && pnpm run test:packages",
+    "clean": "tsc --build packages/core/tsconfig.build.json packages/cli/tsconfig.build.json --clean",
     "test": "pnpm run build && pnpm run test:packages",
     "test:packages": "pnpm --filter @sumink-formula/core run test && pnpm --filter @sumink-formula/cli run test",
     "test:watch": "pnpm --parallel --filter @sumink-formula/core --filter @sumink-formula/cli run test:watch",

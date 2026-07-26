@@ -2,17 +2,18 @@
 
 ```text
 IfExpression =
-    "if" Expression "then" Expression
-    ElifClause*
-    "else" Expression
-
-ElifClause = "elif" Expression "then" Expression
+    "if" "(" Expression ")" Expression ("else" Expression)?
 ```
 
-Conditions must evaluate to Booleans. Conditions are considered in source
-order. The result expression paired with the first `true` condition is
-evaluated and becomes the value of the conditional. If every condition is
-`false`, the `else` expression is evaluated. No unselected result expression is
-evaluated.
+The condition must evaluate to a Boolean. When it is `true`, the consequent is
+evaluated and supplies the result. When it is `false`, the alternative is
+evaluated and supplies the result if present; otherwise the result is `nil`.
+The unselected expression is not evaluated.
 
-The `else` expression is required.
+An `else` belongs to the nearest preceding `if` without an alternative:
+
+```sumi
+if (first) if (second) a else b
+```
+
+The `else b` above is the alternative of `if (second)`.

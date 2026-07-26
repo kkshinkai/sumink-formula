@@ -1,0 +1,11 @@
+fn apply(value) = transform -> transform(value);
+fn choose(condition) = whenTrue -> whenFalse ->
+  if (condition) whenTrue() else whenFalse();
+fn nameOf(person) = person.name;
+
+print(apply {40} {value -> value + 2});
+print(choose {true} {() -> "yes"} {() -> "no"});
+print(nameOf {name: "Ada"});
+
+print({;});
+print({});

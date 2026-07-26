@@ -5,12 +5,11 @@ Expression =
     LiteralExpression
   | IdentifierExpression
   | ArrayExpression
-  | ObjectExpression
+  | DictionaryExpression
   | GroupedExpression
   | ClosureExpression
   | BlockExpression
   | IfExpression
-  | LetExpression
   | CallExpression
   | OperatorExpression
   | SelectorExpression
@@ -19,11 +18,9 @@ Expression =
 IdentifierExpression = IDENTIFIER
 ```
 
-Evaluation is strict. Where an expression evaluates several operands, it does
-so from left to right. This applies to program and block expressions, array
-elements, object members, call arguments, and `let` initializers. A computed
-object member evaluates its key before its value, and a call evaluates its
-callee before its arguments.
+Evaluation is strict. An array evaluates its elements in source order. A
+dictionary evaluates each key before its value and its entries in source order.
+A call evaluates its callee before its arguments, and arguments in source order.
 
 Conditional expressions, `and`, `or`, and match selection evaluate only the
 branch selected by their own rules.
@@ -33,7 +30,7 @@ lowest:
 
 | Precedence | Form | Associativity |
 | ---: | --- | --- |
-| 10 | call `f(...)`, field selection `value.name`, computed selection `value[key]` | left |
+| 10 | call `f(...)`, braced call `f {...}`, field selection `value.name`, computed selection `value[key]` | left |
 | 9 | prefix `-`, `not` | right |
 | 8 | `*`, `/`, `%` | left |
 | 7 | `+`, `-` | left |
@@ -44,16 +41,19 @@ lowest:
 | 2 | `and` | left |
 | 1 | `or` | left |
 
+The arrow in a closure expression has lower precedence than every postfix and
+operator form. Its body extends as far to the right as the surrounding grammar
+permits.
+
 The individual expression forms are:
 
 - [Literal expressions](./literal-expressions.md)
 - [Grouped expressions](./grouped-expressions.md)
 - [Array expressions](./array-expressions.md)
-- [Object expressions](./object-expressions.md)
+- [Dictionary expressions](./dictionary-expressions.md)
 - [Closure expressions](./closure-expressions.md)
 - [Block expressions](./block-expressions.md)
 - [Conditional expressions](./conditional-expressions.md)
-- [`let` expressions](./let-expressions.md)
 - [Call expressions](./call-expressions.md)
 - [Operator expressions](./operator-expressions.md)
 - [Selector expressions](./selector-expressions.md)
