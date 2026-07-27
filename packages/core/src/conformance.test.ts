@@ -6,7 +6,7 @@ import type { CstNode } from "./cst.js";
 import { analyze } from "./interpreter.js";
 import { parse } from "./parser.js";
 import { SyntaxKind } from "./syntax-kind.js";
-import type { SyntaxToken } from "./token.js";
+import { tokenFullRange, type SyntaxToken } from "./token.js";
 
 describe("grammar conformance", () => {
   it.each([
@@ -27,6 +27,7 @@ describe("grammar conformance", () => {
     ["fn statements", "fn first(x) = second(x); fn second(x) = x; first(1);"],
     ["match tests", "value match 1; value match _;"],
     ["match selections", "value match { case 0 -> 'zero' case x -> x else -> nil };"],
+    ["comments", "// line\n1; /* outer /* nested */ outer */ 2;"],
   ])("accepts every approved %s form", (_description, source) => {
     expect(analyze(source).diagnostics).toEqual([]);
   });
@@ -181,13 +182,17 @@ function reconstructCst(node: CstNode, source: string): string {
     }
     if (child.type === "skipped-tokens") {
       return child.tokens
-        .filter((token) => token.kind !== SyntaxKind.EndOfFileToken)
-        .map((token) => source.slice(token.range.start, token.range.end))
+        .map((token) => {
+          const range = tokenFullRange(token);
+          return source.slice(range.start, range.end);
+        })
         .join("");
     }
-    return child.type === "token" && child.kind !== SyntaxKind.EndOfFileToken
-      ? source.slice(child.range.start, child.range.end)
-      : "";
+    if (child.type !== "token") {
+      return "";
+    }
+    const range = tokenFullRange(child);
+    return source.slice(range.start, range.end);
   }).join("");
 }
 

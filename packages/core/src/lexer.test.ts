@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { lex } from "./lexer.js";
 import { SyntaxKind } from "./syntax-kind.js";
-import { TokenFlags } from "./token.js";
+import { tokenFullRange, TokenFlags, TriviaFlags, TriviaKind } from "./token.js";
 import {
   unicodeIdentifierContinueRanges,
   unicodeIdentifierStartRanges,
@@ -17,7 +17,7 @@ describe("lex", () => {
     );
 
     expect(result.diagnostics).toEqual([]);
-    expect(result.tokens.filter((token) => token.kind !== SyntaxKind.WhitespaceTrivia).map((token) => token.kind))
+    expect(result.tokens.map((token) => token.kind))
       .toEqual([
         SyntaxKind.IfKeyword,
         SyntaxKind.ElseKeyword,
@@ -70,7 +70,7 @@ describe("lex", () => {
     const result = lex("left && middle || right");
 
     expect(result.diagnostics).toEqual([]);
-    expect(result.tokens.filter((token) => token.kind !== SyntaxKind.WhitespaceTrivia).map((token) => token.kind))
+    expect(result.tokens.map((token) => token.kind))
       .toEqual([
         SyntaxKind.IdentifierToken,
         SyntaxKind.AmpersandAmpersandToken,
@@ -159,6 +159,146 @@ describe("lex", () => {
     expect(result.tokens.some((token) => (token.flags & TokenFlags.Unterminated) !== 0)).toBe(true);
   });
 
+  it("lexes line comments without consuming their line break", () => {
+    const source = "value; // trailing\n// leading\nnext;";
+    const result = lex(source);
+    const semicolon = result.tokens.find((token) =>
+      token.kind === SyntaxKind.SemicolonToken && token.range.start === 5
+    );
+    const next = result.tokens.find((token) => token.value === "next");
+
+    expect(result.diagnostics).toEqual([]);
+    expect(semicolon?.trailingTrivia.map((trivia) => trivia.kind)).toEqual([
+      TriviaKind.Whitespace,
+      TriviaKind.LineComment,
+    ]);
+    expect(semicolon?.trailingTrivia.map((trivia) => result.source.slice(trivia.range))).toEqual([
+      " ",
+      "// trailing",
+    ]);
+    expect(next?.leadingTrivia.map((trivia) => trivia.kind)).toEqual([
+      TriviaKind.Whitespace,
+      TriviaKind.LineComment,
+      TriviaKind.Whitespace,
+    ]);
+    expect(next?.leadingTrivia.map((trivia) => result.source.slice(trivia.range))).toEqual([
+      "\n",
+      "// leading",
+      "\n",
+    ]);
+  });
+
+  it("nests block comments and keeps their delimiters in one trivia piece", () => {
+    const source = "/* outer /* inner */ outer */ value;";
+    const result = lex(source);
+    const value = result.tokens[0];
+
+    expect(result.diagnostics).toEqual([]);
+    expect(value).toMatchObject({ kind: SyntaxKind.IdentifierToken, value: "value" });
+    expect(value?.leadingTrivia).toHaveLength(2);
+    expect(value?.leadingTrivia[0]).toMatchObject({
+      kind: TriviaKind.BlockComment,
+      flags: TriviaFlags.None,
+      range: { start: 0, end: 29 },
+    });
+    expect(result.source.slice(value!.leadingTrivia[0]!.range)).toBe("/* outer /* inner */ outer */");
+  });
+
+  it("handles deeply nested block comments iteratively", () => {
+    const depth = 2_000;
+    const source = "/*".repeat(depth) + "inside" + "*/".repeat(depth) + "nil;";
+    const result = lex(source);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.tokens[0]?.kind).toBe(SyntaxKind.NilKeyword);
+    expect(result.tokens[0]?.leadingTrivia).toMatchObject([{
+      kind: TriviaKind.BlockComment,
+      flags: TriviaFlags.None,
+      range: { start: 0, end: source.length - 4 },
+    }]);
+    expect(reconstruct(result)).toBe(source);
+  });
+
+  it("does not recognize comment delimiters inside string literals", () => {
+    const source = String.raw`"// not a comment"; "/* neither */";`;
+    const result = lex(source);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.tokens.filter((token) => token.kind === SyntaxKind.StringLiteralToken)).toHaveLength(2);
+    expect(result.tokens.flatMap((token) => [
+      ...token.leadingTrivia,
+      ...token.trailingTrivia,
+    ])).toHaveLength(1);
+    expect(reconstruct(result)).toBe(source);
+  });
+
+  it("keeps a multiline block comment trailing when it begins after a token on the same line", () => {
+    const source = "left /* first\n /* nested */\n */ right;";
+    const result = lex(source);
+    const left = result.tokens[0];
+    const right = result.tokens[1];
+
+    expect(result.diagnostics).toEqual([]);
+    expect(left?.trailingTrivia.map((trivia) => trivia.kind)).toEqual([
+      TriviaKind.Whitespace,
+      TriviaKind.BlockComment,
+      TriviaKind.Whitespace,
+    ]);
+    expect(right?.leadingTrivia).toEqual([]);
+    expect(result.source.slice(left!.trailingTrivia[1]!.range)).toBe("/* first\n /* nested */\n */");
+  });
+
+  it("assigns file-only and final detached comments to EOF", () => {
+    const onlyComment = lex("// only");
+    const detached = lex("value;\n\n/* final */");
+    const onlyEof = onlyComment.tokens.at(-1);
+    const detachedEof = detached.tokens.at(-1);
+
+    expect(onlyEof?.kind).toBe(SyntaxKind.EndOfFileToken);
+    expect(onlyEof?.leadingTrivia.map((trivia) => trivia.kind)).toEqual([
+      TriviaKind.LineComment,
+    ]);
+    expect(detachedEof?.leadingTrivia.map((trivia) => trivia.kind)).toEqual([
+      TriviaKind.Whitespace,
+      TriviaKind.BlockComment,
+    ]);
+    expect(reconstruct(onlyComment)).toBe("// only");
+    expect(reconstruct(detached)).toBe("value;\n\n/* final */");
+  });
+
+  it("reports one unterminated nested block comment through EOF", () => {
+    const source = "value; /* outer /* inner */";
+    const result = lex(source);
+    const comment = result.tokens[1]?.trailingTrivia.find((trivia) =>
+      trivia.kind === TriviaKind.BlockComment
+    );
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "SF1008",
+        message: "Unterminated block comment.",
+        range: { start: 7, end: source.length },
+      }),
+    ]);
+    expect(comment?.flags).toBe(TriviaFlags.Unterminated);
+    expect(comment?.range).toEqual({ start: 7, end: source.length });
+    expect(reconstruct(result)).toBe(source);
+  });
+
+  it("rejects unpaired UTF-16 surrogates inside comments without losing the comments", () => {
+    const source = "// \ud800\n/* \udfff */ value;";
+    const result = lex(source);
+
+    expect(result.diagnostics.map((entry) => entry.code)).toEqual(["SF1006", "SF1006"]);
+    expect(reconstruct(result)).toBe(source);
+    expect(result.tokens[0]?.leadingTrivia.map((trivia) => trivia.kind)).toEqual([
+      TriviaKind.LineComment,
+      TriviaKind.Whitespace,
+      TriviaKind.BlockComment,
+      TriviaKind.Whitespace,
+    ]);
+  });
+
   it("accepts escaped surrogate pairs but rejects unpaired escaped surrogates", () => {
     expect(lex(String.raw`"\uD83D\uDE00"`).diagnostics).toEqual([]);
     expect(lex(String.raw`"\uD800"`).diagnostics).toMatchObject([{ code: "SF1005" }]);
@@ -188,14 +328,12 @@ describe("lex", () => {
 
 function reconstruct(result: ReturnType<typeof lex>): string {
   return result.tokens
-    .filter((token) => token.kind !== SyntaxKind.EndOfFileToken)
-    .map((token) => result.source.slice(token.range))
+    .map((token) => result.source.slice(tokenFullRange(token)))
     .join("");
 }
 
 function significantKinds(source: string): SyntaxKind[] {
   return lex(source).tokens
-    .filter((token) => token.kind !== SyntaxKind.WhitespaceTrivia)
     .map((token) => token.kind);
 }
 
@@ -229,9 +367,26 @@ function expectRangeMap(
 function expectTokenPartition(result: ReturnType<typeof lex>, sourceLength: number): void {
   let position = 0;
   for (const token of result.tokens) {
+    for (const trivia of token.leadingTrivia) {
+      expect(trivia.range.start).toBe(position);
+      expect(trivia.range.end).toBeGreaterThan(trivia.range.start);
+      position = trivia.range.end;
+    }
+
     expect(token.range.start).toBe(position);
     expect(token.range.end).toBeGreaterThanOrEqual(token.range.start);
     position = token.range.end;
+
+    for (const trivia of token.trailingTrivia) {
+      expect(trivia.range.start).toBe(position);
+      expect(trivia.range.end).toBeGreaterThan(trivia.range.start);
+      position = trivia.range.end;
+    }
+
+    expect(tokenFullRange(token)).toEqual({
+      start: token.leadingTrivia[0]?.range.start ?? token.range.start,
+      end: token.trailingTrivia.at(-1)?.range.end ?? token.range.end,
+    });
   }
   expect(position).toBe(sourceLength);
 }

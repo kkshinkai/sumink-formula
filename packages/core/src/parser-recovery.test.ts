@@ -5,7 +5,7 @@ import { CstKind, isCstNode, type CstElement, type CstNode } from "./cst.js";
 import { lex } from "./lexer.js";
 import { parse } from "./parser.js";
 import { SyntaxKind } from "./syntax-kind.js";
-import type { SyntaxToken } from "./token.js";
+import { tokenFullRange, type SyntaxToken } from "./token.js";
 
 interface RecoveryFixture {
   readonly name: string;
@@ -194,7 +194,7 @@ describe("parser recovery contract", () => {
       expect(parse(source).diagnostics, source).toEqual([]);
 
       const tokens = lex(source).tokens.filter((token) =>
-        token.kind !== SyntaxKind.WhitespaceTrivia && token.kind !== SyntaxKind.EndOfFileToken
+        token.kind !== SyntaxKind.EndOfFileToken
       );
       for (const token of tokens) {
         for (const edited of [
@@ -256,14 +256,12 @@ function reconstruct(node: CstNode, source: string): string {
   let result = "";
   for (const child of node.children) {
     if (child.type === "token") {
-      if (child.kind !== SyntaxKind.EndOfFileToken) {
-        result += source.slice(child.range.start, child.range.end);
-      }
+      const range = tokenFullRange(child);
+      result += source.slice(range.start, range.end);
     } else if (child.type === "skipped-tokens") {
       for (const token of child.tokens) {
-        if (token.kind !== SyntaxKind.EndOfFileToken) {
-          result += source.slice(token.range.start, token.range.end);
-        }
+        const range = tokenFullRange(token);
+        result += source.slice(range.start, range.end);
       }
     } else if (child.type === "node") {
       result += reconstruct(child, source);

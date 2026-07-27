@@ -1,7 +1,13 @@
 import { diagnostic, sortDiagnostics, type Diagnostic } from "./diagnostic.js";
 import { keywordKind, SyntaxKind } from "./syntax-kind.js";
 import { SourceText, textRange } from "./text.js";
-import { TokenFlags, type SyntaxToken } from "./token.js";
+import {
+  TokenFlags,
+  TriviaFlags,
+  TriviaKind,
+  type SyntaxToken,
+  type SyntaxTrivia,
+} from "./token.js";
 import {
   unicodeIdentifierContinueRanges,
   unicodeIdentifierStartRanges,
@@ -25,6 +31,7 @@ class Lexer {
   readonly #tokens: SyntaxToken[] = [];
   readonly #diagnostics: Diagnostic[] = [];
   #position = 0;
+  #leadingTrivia: readonly SyntaxTrivia[] = [];
 
   public constructor(source: SourceText) {
     this.#source = source;
@@ -32,17 +39,29 @@ class Lexer {
   }
 
   public scanAll(): LexResult {
-    while (this.#position < this.#text.length) {
+    while (true) {
+      this.#leadingTrivia = this.#scanTrivia(true);
+      if (this.#position >= this.#text.length) {
+        this.#tokens.push({
+          type: "token",
+          kind: SyntaxKind.EndOfFileToken,
+          range: textRange(this.#position, this.#position),
+          leadingTrivia: this.#leadingTrivia,
+          trailingTrivia: [],
+          flags: TokenFlags.None,
+        });
+        break;
+      }
+
       const start = this.#position;
       const codePoint = this.#codePointAt(start);
 
       if (codePoint === undefined) {
-        break;
+        throw new Error("Lexer position is inside the source but has no UTF-16 code unit.");
       }
 
-      if (isWhitespace(codePoint)) {
-        this.#scanWhitespace(start);
-      } else if (isDecimalDigit(codePoint)) {
+      const tokenIndex = this.#tokens.length;
+      if (isDecimalDigit(codePoint)) {
         this.#scanNumber(start);
       } else if (codePoint === 0x22 || codePoint === 0x27) {
         this.#scanString(start, codePoint);
@@ -53,14 +72,16 @@ class Lexer {
           this.#scanPunctuationOrUnknown(start, codePoint);
         }
       }
-    }
 
-    this.#tokens.push({
-      type: "token",
-      kind: SyntaxKind.EndOfFileToken,
-      range: textRange(this.#position, this.#position),
-      flags: TokenFlags.None,
-    });
+      const token = this.#tokens[tokenIndex];
+      if (token === undefined || this.#tokens.length !== tokenIndex + 1) {
+        throw new Error("Scanning one token must append exactly one token.");
+      }
+      this.#tokens[tokenIndex] = {
+        ...token,
+        trailingTrivia: this.#scanTrivia(false),
+      };
+    }
 
     return {
       source: this.#source,
@@ -69,16 +90,94 @@ class Lexer {
     };
   }
 
-  #scanWhitespace(start: number): void {
+  #scanTrivia(includeLineBreaks: boolean): readonly SyntaxTrivia[] {
+    const trivia: SyntaxTrivia[] = [];
+
     while (this.#position < this.#text.length) {
-      const codePoint = this.#codePointAt(this.#position);
-      if (codePoint === undefined || !isWhitespace(codePoint)) {
+      const start = this.#position;
+      let codePoint = this.#codePointAt(start);
+      if (codePoint === undefined) {
         break;
       }
-      this.#advanceCodePoint(codePoint);
+
+      if (isWhitespace(codePoint) && (includeLineBreaks || !isLineBreak(codePoint))) {
+        do {
+          this.#advanceCodePoint(codePoint);
+          const next = this.#codePointAt(this.#position);
+          if (
+            next === undefined
+            || !isWhitespace(next)
+            || (!includeLineBreaks && isLineBreak(next))
+          ) {
+            break;
+          }
+          codePoint = next;
+        } while (true);
+        trivia.push(this.#trivia(TriviaKind.Whitespace, start));
+        continue;
+      }
+
+      if (codePoint !== 0x2f) {
+        break;
+      }
+
+      const next = this.#text.charCodeAt(start + 1);
+      if (next === 0x2f) {
+        this.#position += 2;
+        while (this.#position < this.#text.length) {
+          const current = this.#codePointAt(this.#position);
+          if (current === undefined) {
+            break;
+          }
+          if (isLineBreak(current)) {
+            break;
+          }
+          this.#advanceTriviaCodePoint(current);
+        }
+        trivia.push(this.#trivia(TriviaKind.LineComment, start));
+        continue;
+      }
+
+      if (next === 0x2a) {
+        this.#position += 2;
+        let depth = 1;
+        while (this.#position < this.#text.length && depth > 0) {
+          const current = this.#text.charCodeAt(this.#position);
+          const following = this.#text.charCodeAt(this.#position + 1);
+          if (current === 0x2f && following === 0x2a) {
+            depth += 1;
+            this.#position += 2;
+          } else if (current === 0x2a && following === 0x2f) {
+            depth -= 1;
+            this.#position += 2;
+          } else {
+            const codePoint = this.#codePointAt(this.#position);
+            if (codePoint === undefined) {
+              break;
+            }
+            this.#advanceTriviaCodePoint(codePoint);
+          }
+        }
+
+        const flags = depth === 0 ? TriviaFlags.None : TriviaFlags.Unterminated;
+        if (flags !== TriviaFlags.None) {
+          this.#diagnostics.push(
+            diagnostic(
+              "SF1008",
+              "lex",
+              "Unterminated block comment.",
+              textRange(start, this.#position),
+            ),
+          );
+        }
+        trivia.push(this.#trivia(TriviaKind.BlockComment, start, flags));
+        continue;
+      }
+
+      break;
     }
 
-    this.#pushToken(SyntaxKind.WhitespaceTrivia, start);
+    return trivia;
   }
 
   #scanIdentifier(start: number): void {
@@ -343,9 +442,37 @@ class Lexer {
     flags: TokenFlags = TokenFlags.None,
   ): void {
     const token: SyntaxToken = value === undefined
-      ? { type: "token", kind, range: textRange(start, this.#position), flags }
-      : { type: "token", kind, range: textRange(start, this.#position), value, flags };
+      ? {
+          type: "token",
+          kind,
+          range: textRange(start, this.#position),
+          leadingTrivia: this.#leadingTrivia,
+          trailingTrivia: [],
+          flags,
+        }
+      : {
+          type: "token",
+          kind,
+          range: textRange(start, this.#position),
+          leadingTrivia: this.#leadingTrivia,
+          trailingTrivia: [],
+          value,
+          flags,
+        };
     this.#tokens.push(token);
+  }
+
+  #trivia(
+    kind: TriviaKind,
+    start: number,
+    flags: TriviaFlags = TriviaFlags.None,
+  ): SyntaxTrivia {
+    return {
+      type: "trivia",
+      kind,
+      range: textRange(start, this.#position),
+      flags,
+    };
   }
 
   #codePointAt(offset: number): number | undefined {
@@ -354,6 +481,16 @@ class Lexer {
 
   #advanceCodePoint(codePoint: number): void {
     this.#position += codePoint > 0xffff ? 2 : 1;
+  }
+
+  #advanceTriviaCodePoint(codePoint: number): void {
+    const start = this.#position;
+    this.#advanceCodePoint(codePoint);
+    if (isSurrogateCodeUnit(this.#text.charCodeAt(start)) && codePoint <= 0xffff) {
+      this.#diagnostics.push(
+        diagnostic("SF1006", "lex", "Unpaired UTF-16 surrogate.", textRange(start, this.#position)),
+      );
+    }
   }
 }
 
@@ -401,6 +538,10 @@ const singleCharacterTokens = new Map<number, SyntaxToken["kind"]>([
 
 function isWhitespace(codePoint: number): boolean {
   return codePoint === 0x20 || codePoint === 0x09 || codePoint === 0x0a || codePoint === 0x0d;
+}
+
+function isLineBreak(codePoint: number): boolean {
+  return codePoint === 0x0a || codePoint === 0x0d;
 }
 
 function isUnrecognizedPunctuation(text: string, position: number, codePoint: number): boolean {

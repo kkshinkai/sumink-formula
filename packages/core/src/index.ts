@@ -38,9 +38,16 @@ export {
   type RuntimeDictionaryEntry,
   type RuntimeValue,
 } from "./runtime-value.js";
-export { isTriviaKind, keywordKind, SyntaxKind } from "./syntax-kind.js";
+export { keywordKind, SyntaxKind } from "./syntax-kind.js";
 export { SourceText, textRange, textRangeLength, type SourcePosition, type TextRange } from "./text.js";
-export { TokenFlags, type SyntaxToken } from "./token.js";
+export {
+  tokenFullRange,
+  TokenFlags,
+  TriviaFlags,
+  TriviaKind,
+  type SyntaxToken,
+  type SyntaxTrivia,
+} from "./token.js";
 export type {
   ArrayExpression,
   BlockExpression,

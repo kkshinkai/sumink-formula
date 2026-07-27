@@ -4,6 +4,7 @@ export type DiagnosticCategory = "error" | "warning";
 export type DiagnosticPhase = "lex" | "parse" | "resolve" | "evaluate";
 export type DiagnosticCode =
   | "SF1000" | "SF1001" | "SF1002" | "SF1003" | "SF1004" | "SF1005" | "SF1006" | "SF1007"
+  | "SF1008"
   | "SF2000" | "SF2001" | "SF2002" | "SF2003" | "SF2004" | "SF2006" | "SF2007" | "SF2008"
   | "SF3000"
   | "SF4000" | "SF4001" | "SF4002" | "SF4003" | "SF4004" | "SF4005" | "SF4006"

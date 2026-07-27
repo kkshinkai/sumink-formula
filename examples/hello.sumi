@@ -1,3 +1,5 @@
+// Comments are trivia and do not change evaluation.
 fn greet(name) = print("Hello, " + name + "!");
 
+/* Block comments may contain /* nested comments */ without ending early. */
 greet("world");

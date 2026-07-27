@@ -29,6 +29,16 @@ describe("statements and lexical closures", () => {
     expect(events).toEqual([1, 2]);
   });
 
+  it("treats nested comments as trivia at every expression boundary", () => {
+    expectExpression([
+      "/* before */ {",
+      "let value /* name */ = /* value */ 40;",
+      "fn add(/* parameter */ amount) = value + amount; // body",
+      "add(/* argument /* nested */ */ 2)",
+      "} /* after */",
+    ].join("\n"), 42);
+  });
+
   it("uses lexical rather than dynamic scope under shadowing", () => {
     expectExpression("{ let x = 1; let f = () -> x; { let x = 2; f() } }", 1);
   });

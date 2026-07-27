@@ -12,9 +12,22 @@ source
   -> strict evaluator
 ```
 
-The CST retains every source token and trivia token. Recovery inserts explicit
+The CST retains every source token and its trivia. Recovery inserts explicit
 zero-width missing-token nodes without modifying the source stream. The AST is
 separate so editor recovery structure cannot become executable semantics.
+
+Trivia uses the token-ownership model of SwiftSyntax and Roslyn. Every source
+character belongs to exactly one token spelling or one trivia piece. A token
+owns spaces and comments after it on the same line as trailing trivia; it does
+not own the following line break. That line break and subsequent trivia belong
+to the next token as leading trivia. A block comment that starts on the same
+line remains trailing trivia even when the comment itself spans lines. Initial
+trivia belongs to the first token, and remaining file trivia belongs to the EOF
+token.
+
+This is lexical ownership only. A future documentation layer may decide that a
+leading comment documents a declaration based on adjacency and comment form;
+the lexer does not turn that policy into a second ownership rule.
 
 Local identifiers are resolved to `BindingId` values before evaluation.
 Unresolved lexical names are explicit host dependencies. Every lexical scope
@@ -39,9 +52,17 @@ checked against Roslyn. The architecture is adapted rather than copied:
 TypeScript's AST is not lossless, while this package requires a distinct
 lossless CST.
 
+Comment storage and trivia boundaries follow SwiftSyntax's token model and the
+Swift parser's split between unrestricted leading trivia and same-line trailing
+trivia. Roslyn's `LeadingTrivia` and `TrailingTrivia` collections provide the
+same full-fidelity boundary. Documentation attachment remains a separate layer,
+as it does in compilers that distinguish lexical comments from declaration
+documentation.
+
 ## Public entry points
 
-- `lex(source)` returns all tokens, including trivia, and lexical diagnostics.
+- `lex(source)` returns tokens with explicit leading and trailing trivia, plus
+  lexical diagnostics.
 - `parse(source)` returns the token stream, lossless CST, and diagnostics.
 - `lower(parseResult)` creates the semantic AST.
 - `resolve(program)` assigns lexical identities and computes host dependencies.

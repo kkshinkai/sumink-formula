@@ -1,7 +1,6 @@
 export const enum SyntaxKind {
   EndOfFileToken,
   UnknownToken,
-  WhitespaceTrivia,
 
   IdentifierToken,
   NumberLiteralToken,
@@ -64,8 +63,4 @@ const keywordKinds = new Map<string, SyntaxKind>([
 
 export function keywordKind(text: string): SyntaxKind | undefined {
   return keywordKinds.get(text);
-}
-
-export function isTriviaKind(kind: SyntaxKind): boolean {
-  return kind === SyntaxKind.WhitespaceTrivia;
 }

@@ -52,9 +52,9 @@ export interface CstNode {
   readonly kind: CstKind;
   /** Range from the first through last significant token. */
   readonly range: TextRange;
-  /** Range including trivia owned by this node. */
+  /** Range including trivia owned by the boundary tokens of this node. */
   readonly fullRange: TextRange;
-  /** Half-open indexes into ParseResult.tokens. */
+  /** Half-open indexes into ParseResult.tokens; trivia is stored on those tokens. */
   readonly tokenRange: TextRange;
   readonly children: readonly CstElement[];
 }

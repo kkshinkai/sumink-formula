@@ -5,7 +5,7 @@ import { CstKind, type CstElement, type CstNode } from "./cst.js";
 import { lower } from "./lower.js";
 import { parse } from "./parser.js";
 import { SyntaxKind } from "./syntax-kind.js";
-import type { SyntaxToken } from "./token.js";
+import { tokenFullRange, type SyntaxToken } from "./token.js";
 
 describe("parse", () => {
   it("builds parenthesized and bare closures from the same closure node", () => {
@@ -43,6 +43,41 @@ describe("parse", () => {
       { kind: "FnStatement", name: "add", parameters: [{ name: "y" }] },
       { kind: "ExpressionStatement", expression: { kind: "CallExpression" } },
     ]);
+  });
+
+  it("derives CST full ranges from token-owned trivia", () => {
+    const source = [
+      "// first",
+      "fn first() = 1; // trailing",
+      "",
+      "// second",
+      "fn second() = 2;",
+      "// file end",
+    ].join("\n");
+    const result = parse(source);
+    const statements = childNodes(result.cst).filter((node) => node.kind === CstKind.FnStatement);
+    const fnTokens = result.tokens.filter((token) => token.kind === SyntaxKind.FnKeyword);
+    const eof = result.tokens.at(-1);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.source.slice(statements[0]!.fullRange)).toBe(
+      "// first\nfn first() = 1; // trailing",
+    );
+    expect(result.source.slice(statements[0]!.range)).toBe("fn first() = 1;");
+    expect(fnTokens[0]?.leadingTrivia.map((trivia) => result.source.slice(trivia.range))).toEqual([
+      "// first",
+      "\n",
+    ]);
+    expect(fnTokens[1]?.leadingTrivia.map((trivia) => result.source.slice(trivia.range))).toEqual([
+      "\n\n",
+      "// second",
+      "\n",
+    ]);
+    expect(eof?.leadingTrivia.map((trivia) => result.source.slice(trivia.range))).toEqual([
+      "\n",
+      "// file end",
+    ]);
+    expect(reconstruct(result.cst, source)).toBe(source);
   });
 
   it("commits braces once using dictionary syntax as the discriminator", () => {
@@ -259,13 +294,17 @@ function reconstruct(node: CstNode, source: string): string {
     }
     if (child.type === "skipped-tokens") {
       return child.tokens
-        .filter((token) => token.kind !== SyntaxKind.EndOfFileToken)
-        .map((token) => source.slice(token.range.start, token.range.end))
+        .map((token) => {
+          const range = tokenFullRange(token);
+          return source.slice(range.start, range.end);
+        })
         .join("");
     }
-    return child.type === "token" && child.kind !== SyntaxKind.EndOfFileToken
-      ? source.slice(child.range.start, child.range.end)
-      : "";
+    if (child.type !== "token") {
+      return "";
+    }
+    const range = tokenFullRange(child);
+    return source.slice(range.start, range.end);
   }).join("");
 }
 

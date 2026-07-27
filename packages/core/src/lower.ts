@@ -376,7 +376,14 @@ function directTokens(node: CstNode): SyntaxToken[] {
 
 function requiredDirectToken(node: CstNode, kind: SyntaxToken["kind"]): SyntaxToken {
   const token = directTokens(node).find((candidate) => candidate.kind === kind);
-  return token ?? { type: "token", kind, range: node.range, flags: 0 };
+  return token ?? {
+    type: "token",
+    kind,
+    range: node.range,
+    leadingTrivia: [],
+    trailingTrivia: [],
+    flags: 0,
+  };
 }
 
 function literalValue(node: CstNode): LiteralValue {

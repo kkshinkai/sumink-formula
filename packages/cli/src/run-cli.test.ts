@@ -21,6 +21,20 @@ describe("runCli", () => {
     expect(host.stderr).toBe("");
   });
 
+  it("executes source with line and nested block comments", () => {
+    const host = new FakeHost({
+      "comments.sumi": [
+        "// before",
+        "let answer = /* outer /* nested */ outer */ 42;",
+        "print(answer); // after",
+      ].join("\n"),
+    });
+
+    expect(runCli(["comments.sumi"], host)).toBe(ExitStatus.Success);
+    expect(host.stdout).toBe("42\n");
+    expect(host.stderr).toBe("");
+  });
+
   it("prints structured values and reports functions deterministically", () => {
     const host = new FakeHost({
       "values.sumi": "print([1, {name: 'Ada'}]); print((value) -> value);",

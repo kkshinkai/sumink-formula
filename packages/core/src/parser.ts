@@ -7,9 +7,9 @@ import {
 } from "./cst.js";
 import { diagnostic, sortDiagnostics, type Diagnostic, type DiagnosticCode } from "./diagnostic.js";
 import { lex } from "./lexer.js";
-import { isTriviaKind, SyntaxKind } from "./syntax-kind.js";
+import { SyntaxKind } from "./syntax-kind.js";
 import { SourceText, textRange } from "./text.js";
-import { TokenFlags, type SyntaxToken } from "./token.js";
+import { tokenFullRange, TokenFlags, type SyntaxToken } from "./token.js";
 
 export interface ParseResult {
   readonly source: SourceText;
@@ -891,7 +891,7 @@ class Parser {
   }
 
   #looksLikeClosure(): boolean {
-    let cursor = this.#nextSignificantIndex(this.#position);
+    let cursor = this.#position;
     if (this.#tokens[cursor]?.kind !== SyntaxKind.OpenParenToken) {
       return false;
     }
@@ -903,13 +903,13 @@ class Parser {
       } else if (kind === SyntaxKind.CloseParenToken) {
         depth -= 1;
         if (depth === 0) {
-          cursor = this.#nextSignificantIndex(cursor + 1);
+          cursor += 1;
           return this.#tokens[cursor]?.kind === SyntaxKind.ArrowToken;
         }
       } else if (kind === SyntaxKind.EndOfFileToken) {
         return false;
       }
-      cursor = this.#nextSignificantIndex(cursor + 1);
+      cursor += 1;
     }
     return false;
   }
@@ -920,11 +920,11 @@ class Parser {
   }
 
   #looksLikeDictionaryExpression(): boolean {
-    let cursor = this.#nextSignificantIndex(this.#position);
+    let cursor = this.#position;
     if (this.#tokens[cursor]?.kind !== SyntaxKind.OpenBraceToken) {
       return false;
     }
-    cursor = this.#nextSignificantIndex(cursor + 1);
+    cursor += 1;
     const first = this.#tokens[cursor]?.kind;
     if (first === SyntaxKind.CloseBraceToken) {
       return true;
@@ -934,7 +934,7 @@ class Parser {
       || first === SyntaxKind.StringLiteralToken
       || first === SyntaxKind.NumberLiteralToken
     ) {
-      cursor = this.#nextSignificantIndex(cursor + 1);
+      cursor += 1;
       return this.#tokens[cursor]?.kind === SyntaxKind.ColonToken;
     }
     if (first !== SyntaxKind.OpenBracketToken) {
@@ -950,24 +950,23 @@ class Parser {
       } else if (expectedClosers.at(-1) === kind) {
         expectedClosers.pop();
         if (expectedClosers.length === 0) {
-          cursor = this.#nextSignificantIndex(cursor + 1);
+          cursor += 1;
           return this.#tokens[cursor]?.kind === SyntaxKind.ColonToken;
         }
       } else if (kind === SyntaxKind.EndOfFileToken) {
         return false;
       }
-      cursor = this.#nextSignificantIndex(cursor + 1);
+      cursor += 1;
     }
     return false;
   }
 
   #peekKindAfterCurrent(): SyntaxKind {
-    const current = this.#nextSignificantIndex(this.#position);
-    return this.#tokens[this.#nextSignificantIndex(current + 1)]?.kind ?? SyntaxKind.EndOfFileToken;
+    return this.#tokens[this.#position + 1]?.kind ?? SyntaxKind.EndOfFileToken;
   }
 
   #looksLikeMatchSelection(): boolean {
-    let cursor = this.#nextSignificantIndex(this.#position);
+    let cursor = this.#position;
     let kind = this.#tokens[cursor]?.kind;
     if (
       kind === SyntaxKind.OpenBraceToken
@@ -982,7 +981,7 @@ class Parser {
       && kind !== SyntaxKind.EndOfFileToken
       && (this.#tokens[cursor]?.flags ?? TokenFlags.None) !== TokenFlags.None
     ) {
-      cursor = this.#nextSignificantIndex(cursor + 1);
+      cursor += 1;
       kind = this.#tokens[cursor]?.kind;
     }
     return kind === SyntaxKind.OpenBraceToken
@@ -1090,17 +1089,16 @@ class Parser {
   }
 
   #consume(): SyntaxToken {
-    const index = this.#nextSignificantIndex(this.#position);
-    const token = this.#tokens[index];
+    const token = this.#tokens[this.#position];
     if (token === undefined) {
       throw new Error("Parser token stream is missing its EOF token.");
     }
-    this.#position = index + 1;
+    this.#position += 1;
     return token;
   }
 
   #peekToken(): SyntaxToken {
-    const token = this.#tokens[this.#nextSignificantIndex(this.#position)];
+    const token = this.#tokens[this.#position];
     if (token === undefined) {
       throw new Error("Parser token stream is missing its EOF token.");
     }
@@ -1151,14 +1149,6 @@ class Parser {
     return this.#position === start ? undefined : this.#skippedTokens(start, this.#position);
   }
 
-  #nextSignificantIndex(from: number): number {
-    let index = from;
-    while (isTriviaKind(this.#tokens[index]?.kind ?? SyntaxKind.EndOfFileToken)) {
-      index += 1;
-    }
-    return index;
-  }
-
   #node(kind: CstNode["kind"], start: number, structure: readonly StructuralElement[] = []): CstNode {
     const end = this.#position;
     const ordered = [...structure].sort((left, right) => {
@@ -1205,8 +1195,7 @@ class Parser {
   }
 
   #missingToken(expectedKind: SyntaxKind): CstMissingToken {
-    const index = this.#nextSignificantIndex(this.#position);
-    const offset = this.#tokens[index]?.range.start ?? this.#source.length;
+    const offset = this.#tokens[this.#position]?.range.start ?? this.#source.length;
     return {
       type: "missing-token",
       expectedKind,
@@ -1264,9 +1253,14 @@ class Parser {
   }
 
   #fullRangeForTokenRange(start: number, end: number) {
-    const startOffset = this.#tokens[start]?.range.start ?? this.#source.length;
+    const firstToken = this.#tokens[start];
+    const startOffset = firstToken === undefined
+      ? this.#source.length
+      : tokenFullRange(firstToken).start;
     const endOffset = end > start
-      ? (this.#tokens[end - 1]?.range.end ?? startOffset)
+      ? (this.#tokens[end - 1] === undefined
+          ? startOffset
+          : tokenFullRange(this.#tokens[end - 1]!).end)
       : startOffset;
     return textRange(startOffset, endOffset);
   }
@@ -1283,7 +1277,7 @@ class Parser {
     }
 
     if (first >= end || last < first) {
-      const offset = this.#tokens[this.#nextSignificantIndex(start)]?.range.start ?? this.#source.length;
+      const offset = this.#tokens[start]?.range.start ?? this.#source.length;
       return textRange(offset, offset);
     }
 
@@ -1407,7 +1401,7 @@ function displayToken(kind: SyntaxKind): string {
 }
 
 function isTriviaOrEof(token: SyntaxToken | undefined): boolean {
-  return token === undefined || isTriviaKind(token.kind) || token.kind === SyntaxKind.EndOfFileToken;
+  return token === undefined || token.kind === SyntaxKind.EndOfFileToken;
 }
 
 function diagnosticKey(value: Diagnostic): string {
