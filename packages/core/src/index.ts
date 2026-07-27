@@ -72,7 +72,7 @@ export type {
   LiteralExpression,
   LiteralPattern,
   LiteralValue,
-  MatchCase,
+  MatchArm,
   MatchSelectionExpression,
   MatchTestExpression,
   NodeId,

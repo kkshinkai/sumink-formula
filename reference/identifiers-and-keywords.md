@@ -15,7 +15,7 @@ The following spellings are reserved and cannot be identifiers:
 
 ```text
 if      else    let     fn
-match   case
+match
 nil     true    false
 not     and     or
 ```

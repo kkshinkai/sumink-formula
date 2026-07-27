@@ -26,7 +26,7 @@ describe("grammar conformance", () => {
     ["let statements", "let first = 1; let second = () -> first; second();"],
     ["fn statements", "fn first(x) = second(x); fn second(x) = x; first(1);"],
     ["match tests", "value match 1; value match _;"],
-    ["match selections", "value match { case 0 -> 'zero' case x -> x else -> nil };"],
+    ["match selections", "value match { 0 -> 'zero', x -> x, _ -> nil, };"],
     ["comments", "// line\n1; /* outer /* nested */ outer */ 2;"],
   ])("accepts every approved %s form", (_description, source) => {
     expect(analyze(source).diagnostics).toEqual([]);
@@ -36,7 +36,7 @@ describe("grammar conformance", () => {
     const analysis = analyze([
       "let make = x -> () -> x;",
       "let value = make(input);",
-      "value() match { case 0 -> {kind: 'zero'} case n -> {n, [kind]: n} };",
+      "value() match { 0 -> {kind: 'zero'}, n -> {n, [kind]: n}, };",
     ].join(" "));
     const ids = collectNodeIds(analysis.program);
 
@@ -154,14 +154,11 @@ function collectExpression(expression: Expression, ids: NodeId[]): void {
       return;
     case "MatchSelectionExpression":
       collectExpression(expression.subject, ids);
-      expression.cases.forEach((matchCase) => {
-        ids.push(matchCase.id);
-        collectPattern(matchCase.pattern, ids);
-        collectExpression(matchCase.result, ids);
+      expression.arms.forEach((arm) => {
+        ids.push(arm.id);
+        collectPattern(arm.pattern, ids);
+        collectExpression(arm.result, ids);
       });
-      if (expression.elseBranch !== undefined) {
-        collectExpression(expression.elseBranch, ids);
-      }
       return;
   }
 }

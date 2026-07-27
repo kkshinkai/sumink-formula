@@ -12,7 +12,7 @@ import {
 describe("lex", () => {
   it("recognizes every first-version keyword and punctuation token", () => {
     const result = lex(
-      "if else let fn match case nil true false not and or "
+      "if else let fn match nil true false not and or "
       + "()[]{} ,;:. -> = == != < <= > >= + - * / %",
     );
 
@@ -24,7 +24,6 @@ describe("lex", () => {
         SyntaxKind.LetKeyword,
         SyntaxKind.FnKeyword,
         SyntaxKind.MatchKeyword,
-        SyntaxKind.CaseKeyword,
         SyntaxKind.NilKeyword,
         SyntaxKind.TrueKeyword,
         SyntaxKind.FalseKeyword,
@@ -59,11 +58,11 @@ describe("lex", () => {
   });
 
   it("supports Unicode identifiers without assigning meaning to letter case", () => {
-    const result = lex("alpha Αλφα 数据 _value a\u0301 𐐀 do then elif in");
+    const result = lex("alpha Αλφα 数据 _value a\u0301 𐐀 case do then elif in");
 
     expect(result.diagnostics).toEqual([]);
     expect(result.tokens.filter((token) => token.kind === SyntaxKind.IdentifierToken).map((token) => token.value))
-      .toEqual(["alpha", "Αλφα", "数据", "_value", "a\u0301", "𐐀", "do", "then", "elif", "in"]);
+      .toEqual(["alpha", "Αλφα", "数据", "_value", "a\u0301", "𐐀", "case", "do", "then", "elif", "in"]);
   });
 
   it("keeps common unsupported logical-operator spellings as single tokens", () => {

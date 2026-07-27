@@ -252,15 +252,42 @@ describe("parse", () => {
   });
 
   it("parses subject-first match tests and selections", () => {
-    const result = parse("value match 1; value match { case 1 -> 'one' case n -> n else -> nil };");
+    const result = parse("value match 1; value match { 1 -> 'one', n -> n, _ -> nil, };");
+    const selection = lower(result).program.statements[1];
 
     expect(result.diagnostics).toEqual([]);
     expect(descendantKinds(result.cst)).toEqual(expect.arrayContaining([
       CstKind.MatchTestExpression,
       CstKind.MatchSelectionExpression,
-      CstKind.MatchCase,
-      CstKind.MatchElse,
+      CstKind.MatchArm,
     ]));
+    expect(descendantKinds(result.cst).filter((kind) => kind === CstKind.MatchArm)).toHaveLength(3);
+    expect(selection).toMatchObject({
+      kind: "ExpressionStatement",
+      expression: {
+        kind: "MatchSelectionExpression",
+        arms: [
+          { kind: "MatchArm", pattern: { kind: "LiteralPattern", value: 1 } },
+          { kind: "MatchArm", pattern: { kind: "IdentifierPattern", name: "n" } },
+          { kind: "MatchArm", pattern: { kind: "WildcardPattern" } },
+        ],
+      },
+    });
+  });
+
+  it("requires commas between match arms and no longer recognizes case clauses", () => {
+    const missingComma = parse("value match { 0 -> 'zero' 1 -> 'one' };");
+    const oldSyntax = parse("value match { case 0 -> 'zero' };");
+    const matchElse = parse("value match { 0 -> 'zero', else -> 'other' };");
+
+    expect(missingComma.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "SF2004",
+        message: "Expected ',' between match arms.",
+      }),
+    ]);
+    expect(oldSyntax.diagnostics.length).toBeGreaterThan(0);
+    expect(matchElse.diagnostics.length).toBeGreaterThan(0);
   });
 
   it("preserves all source text and trailing separators", () => {

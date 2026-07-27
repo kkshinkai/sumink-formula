@@ -15,9 +15,14 @@ interface RecoveryFixture {
 
 const lexicalErrorFixtures: readonly RecoveryFixture[] = [
   {
-    name: "statement and pattern coverage",
+    name: "statement coverage",
     source: "; let _ = 1; fn f(1, _) = @;",
     preservedKinds: [CstKind.EmptyStatement, CstKind.LetStatement, CstKind.FnStatement, CstKind.WildcardPattern],
+  },
+  {
+    name: "error pattern",
+    source: "let @ = 1; let value = 2;",
+    preservedKinds: [CstKind.LetStatement, CstKind.ErrorPattern],
   },
   { name: "program", source: "1 @ 2; 3;", preservedKinds: [CstKind.Program, CstKind.ExpressionStatement] },
   {
@@ -68,23 +73,23 @@ const lexicalErrorFixtures: readonly RecoveryFixture[] = [
   { name: "match test", source: "value match @ 1;", preservedKinds: [CstKind.MatchTestExpression] },
   {
     name: "match selection opener",
-    source: "value match @ case 1 -> 1 case 2 -> 2 };",
-    preservedKinds: [CstKind.MatchSelectionExpression, CstKind.MatchCase],
+    source: "value match @ { 1 -> 1, 2 -> 2 };",
+    preservedKinds: [CstKind.MatchSelectionExpression, CstKind.MatchArm],
   },
   {
     name: "match pattern",
-    source: "value match { case @ -> 1 case 2 -> 2 };",
-    preservedKinds: [CstKind.MatchSelectionExpression, CstKind.MatchCase, CstKind.ErrorPattern],
+    source: "value match { @ -> 1, 2 -> 2 };",
+    preservedKinds: [CstKind.MatchSelectionExpression, CstKind.MatchArm],
   },
   {
     name: "match arrow",
-    source: "value match { case 1 @ 1 case 2 -> 2 };",
-    preservedKinds: [CstKind.MatchSelectionExpression, CstKind.MatchCase],
+    source: "value match { 1 @ 1, 2 -> 2 };",
+    preservedKinds: [CstKind.MatchSelectionExpression, CstKind.MatchArm],
   },
   {
     name: "match result",
-    source: "value match { case 1 -> 1 @ 2 case 2 -> 2 else -> 0 };",
-    preservedKinds: [CstKind.MatchSelectionExpression, CstKind.MatchCase, CstKind.MatchElse],
+    source: "value match { 1 -> 1 @ 2, 2 -> 2, _ -> 0 };",
+    preservedKinds: [CstKind.MatchSelectionExpression, CstKind.MatchArm],
   },
 ];
 
@@ -105,7 +110,7 @@ const validGrammarFixtures = [
   "fn even(n) = odd(n - 1); fn odd(n) = even(n - 1); even(4);",
   "value.field[key];",
   "value match 1;",
-  "value match { case 1 -> 'one' case x -> x else -> nil };",
+  "value match { 1 -> 'one', x -> x, _ -> nil, };",
 ] as const;
 
 describe("parser recovery contract", () => {
@@ -226,7 +231,7 @@ describe("parser recovery contract", () => {
         const sources = [
           `if (true @ false) 1 else 2; ${suffix}`,
           `let x = 1 @ 2; ${suffix}`,
-          `value match { case 0 -> 0 @ 1 case 1 -> 1 else -> nil }; ${suffix}`,
+          `value match { 0 -> 0 @ 1, 1 -> 1, _ -> nil }; ${suffix}`,
           `[1 @ 2, ${Array.from({ length: size }, () => "3").join(", ")}];`,
           `{a: 1 @ 2, b: 3}; ${suffix}`,
           `{ let local = 1 @ 2; local }; ${suffix}`,

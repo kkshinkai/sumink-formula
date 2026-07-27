@@ -195,6 +195,46 @@ describe("blocks, lambdas, and calls", () => {
   });
 });
 
+describe("match expressions", () => {
+  it("selects the first accepting arm and exposes only that arm's bindings", () => {
+    expectExpression("2 match { 0 -> 'zero', value -> value + 1, _ -> nil, }", 3);
+    expectExpression("'other' match { 'known' -> 1, _ -> 2 }", 2);
+
+    const analysis = analyze("2 match { value -> value }; value;");
+    expect([...analysis.resolution.dependencies]).toEqual(["value"]);
+  });
+
+  it("evaluates the subject once and does not evaluate later arms", () => {
+    const events: RuntimeValue[] = [];
+    const tap = nativeFunction(({ arguments: [value = null] }) => {
+      events.push(value);
+      return value;
+    }, { name: "tap", arity: 1 });
+
+    const result = interpret("tap(2) match { 0 -> tap('zero'), value -> tap(value), _ -> tap('fallback') };", {
+      globals: { tap },
+    });
+
+    expect(result.analysis.diagnostics).toEqual([]);
+    expect(result.evaluation).toMatchObject({ ok: true, value: null });
+    expect(events).toEqual([2, 2]);
+  });
+
+  it("reports failure when no arm accepts the value", () => {
+    const result = interpret("2 match { 0 -> 'zero', 1 -> 'one' };");
+
+    expect(result.analysis.diagnostics).toEqual([]);
+    expect(result.evaluation).toMatchObject({
+      ok: false,
+      diagnostic: { code: "SF4019", message: "No match arm accepted the value." },
+    });
+  });
+
+  it("allows case as an ordinary identifier", () => {
+    expectExpression("{ let case = 41; let identity = case -> case; identity(case) + 1 }", 42);
+  });
+});
+
 describe("dictionary values", () => {
   it("expands identifier shorthand without changing the singleton block form", () => {
     expectExpression("{ let x = 1; let y = 2; {x, y} }", dictionaryValue([

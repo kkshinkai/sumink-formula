@@ -33,7 +33,7 @@ const enum ParsingContext {
   DictionaryEntries,
   ClosureParameters,
   CallArguments,
-  MatchCases,
+  MatchArms,
   GroupedExpression,
   ComputedDictionaryKey,
   ComputedSelector,
@@ -553,46 +553,31 @@ class Parser {
     }
 
     this.#expect(SyntaxKind.OpenBraceToken, children);
-    this.#withParsingContext(ParsingContext.MatchCases, () => {
-      let caseCount = 0;
-      while (!this.#isListEndForRecovery(ParsingContext.MatchCases, this.#peekKind())) {
-        if (this.#peekKind() === SyntaxKind.CaseKeyword) {
-          const caseStart = this.#position;
-          const caseChildren: StructuralElement[] = [];
-          this.#consume();
-          caseChildren.push(this.#parsePattern());
-          this.#expect(SyntaxKind.ArrowToken, caseChildren);
-          caseChildren.push(this.#parseExpression());
-          children.push(this.#node(CstKind.MatchCase, caseStart, caseChildren));
-          caseCount += 1;
-          continue;
-        }
-
-        if (this.#recoverUnexpectedTokens(
-          ParsingContext.MatchCases,
-          children,
-          "Expected 'case', 'else', or '}'.",
-        ) === RecoveryAction.Abort) {
-          break;
-        }
-      }
-
-      if (caseCount === 0) {
-        this.#report("SF2002", "A match selection requires at least one case.");
-      }
-
-      if (this.#peekKind() === SyntaxKind.ElseKeyword) {
-        const elseStart = this.#position;
-        const elseChildren: StructuralElement[] = [];
-        this.#consume();
-        this.#expect(SyntaxKind.ArrowToken, elseChildren);
-        elseChildren.push(this.#parseExpression());
-        children.push(this.#node(CstKind.MatchElse, elseStart, elseChildren));
-      }
+    let armCount = 0;
+    this.#parseSeparatedList(children, {
+      context: ParsingContext.MatchArms,
+      separator: SyntaxKind.CommaToken,
+      parseElement: () => {
+        armCount += 1;
+        return this.#parseMatchArm();
+      },
+      expectedElementMessage: "Expected a match arm.",
+      expectedSeparatorMessage: "Expected ',' between match arms.",
     });
+    if (armCount === 0) {
+      this.#report("SF2002", "A match selection requires at least one arm.");
+    }
 
     this.#expectClosingDelimiter(SyntaxKind.CloseBraceToken, children);
     return this.#node(CstKind.MatchSelectionExpression, start, children);
+  }
+
+  #parseMatchArm(): CstNode {
+    const start = this.#position;
+    const children: StructuralElement[] = [this.#parsePattern()];
+    this.#expect(SyntaxKind.ArrowToken, children);
+    children.push(this.#parseExpression());
+    return this.#node(CstKind.MatchArm, start, children);
   }
 
   #parsePattern(): CstNode {
@@ -746,8 +731,8 @@ class Parser {
         return isDictionaryEntryStart(kind);
       case ParsingContext.ClosureParameters:
         return isPatternStart(kind);
-      case ParsingContext.MatchCases:
-        return kind === SyntaxKind.CaseKeyword;
+      case ParsingContext.MatchArms:
+        return isPatternStart(kind);
       case ParsingContext.GroupedExpression:
       case ParsingContext.ComputedDictionaryKey:
       case ParsingContext.ComputedSelector:
@@ -778,8 +763,8 @@ class Parser {
       case ParsingContext.CallArguments:
       case ParsingContext.GroupedExpression:
         return kind === SyntaxKind.CloseParenToken;
-      case ParsingContext.MatchCases:
-        return kind === SyntaxKind.ElseKeyword || kind === SyntaxKind.CloseBraceToken;
+      case ParsingContext.MatchArms:
+        return kind === SyntaxKind.CloseBraceToken;
       case ParsingContext.ComputedDictionaryKey:
       case ParsingContext.ComputedSelector:
         return kind === SyntaxKind.CloseBracketToken;
@@ -806,7 +791,7 @@ class Parser {
         return SyntaxKind.CloseBracketToken;
       case ParsingContext.DictionaryEntries:
       case ParsingContext.BlockStatements:
-      case ParsingContext.MatchCases:
+      case ParsingContext.MatchArms:
         return SyntaxKind.CloseBraceToken;
       case ParsingContext.ClosureParameters:
       case ParsingContext.CallArguments:
@@ -828,8 +813,8 @@ class Parser {
       case ParsingContext.DictionaryEntries:
       case ParsingContext.ClosureParameters:
       case ParsingContext.CallArguments:
+      case ParsingContext.MatchArms:
         return SyntaxKind.CommaToken;
-      case ParsingContext.MatchCases:
       case ParsingContext.GroupedExpression:
       case ParsingContext.ComputedDictionaryKey:
       case ParsingContext.ComputedSelector:
@@ -854,7 +839,6 @@ class Parser {
   ): boolean {
     return this.#isListTerminator(context, kind)
       || this.#separatorForContext(context) === kind
-      || (context === ParsingContext.MatchCases && this.#isListElement(context, kind))
       || (
         includeMismatchedCloser
         && this.#expectedClosingDelimiter(context) !== undefined
@@ -873,8 +857,9 @@ class Parser {
         return isExpressionStart(kind);
       case ParsingContext.DictionaryEntries:
         return isDictionaryEntryStart(kind);
+      case ParsingContext.MatchArms:
+        return isPatternStart(kind);
       case ParsingContext.ClosureParameters:
-      case ParsingContext.MatchCases:
       case ParsingContext.GroupedExpression:
       case ParsingContext.ComputedDictionaryKey:
       case ParsingContext.ComputedSelector:
@@ -978,11 +963,7 @@ class Parser {
   #looksLikeMatchSelection(): boolean {
     let cursor = this.#position;
     let kind = this.#tokens[cursor]?.kind;
-    if (
-      kind === SyntaxKind.OpenBraceToken
-      || kind === SyntaxKind.CaseKeyword
-      || kind === SyntaxKind.ElseKeyword
-    ) {
+    if (kind === SyntaxKind.OpenBraceToken) {
       return true;
     }
 
@@ -994,9 +975,7 @@ class Parser {
       cursor += 1;
       kind = this.#tokens[cursor]?.kind;
     }
-    return kind === SyntaxKind.OpenBraceToken
-      || kind === SyntaxKind.CaseKeyword
-      || kind === SyntaxKind.ElseKeyword;
+    return kind === SyntaxKind.OpenBraceToken;
   }
 
   #binaryOperator(): {
@@ -1389,8 +1368,7 @@ function isClosingDelimiter(kind: SyntaxKind | undefined): boolean {
 }
 
 function isKeywordRecoveryBoundary(kind: SyntaxKind): boolean {
-  return kind === SyntaxKind.ElseKeyword
-    || kind === SyntaxKind.CaseKeyword;
+  return kind === SyntaxKind.ElseKeyword;
 }
 
 function closingDelimiterFor(kind: SyntaxKind | undefined): SyntaxKind | undefined {

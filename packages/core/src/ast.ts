@@ -131,8 +131,8 @@ export interface MatchTestExpression extends AstNodeBase {
   readonly pattern: Pattern;
 }
 
-export interface MatchCase extends AstNodeBase {
-  readonly kind: "MatchCase";
+export interface MatchArm extends AstNodeBase {
+  readonly kind: "MatchArm";
   readonly pattern: Pattern;
   readonly result: Expression;
 }
@@ -140,8 +140,7 @@ export interface MatchCase extends AstNodeBase {
 export interface MatchSelectionExpression extends AstNodeBase {
   readonly kind: "MatchSelectionExpression";
   readonly subject: Expression;
-  readonly cases: readonly MatchCase[];
-  readonly elseBranch?: Expression;
+  readonly arms: readonly MatchArm[];
 }
 
 export interface LiteralPattern extends AstNodeBase {

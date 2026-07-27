@@ -11,7 +11,7 @@ import type {
   LetStatement,
   LiteralExpression,
   LiteralValue,
-  MatchCase,
+  MatchArm,
   MatchSelectionExpression,
   NodeId,
   Pattern,
@@ -332,20 +332,16 @@ class Lowerer {
 
   #matchSelection(node: CstNode): MatchSelectionExpression {
     const subject = this.#requiredExpression(node, 0);
-    const cases = directNodes(node)
-      .filter((child) => child.kind === CstKind.MatchCase)
-      .map((matchCase): MatchCase => ({
-        kind: "MatchCase",
+    const arms = directNodes(node)
+      .filter((child) => child.kind === CstKind.MatchArm)
+      .map((matchArm): MatchArm => ({
+        kind: "MatchArm",
         id: this.#id(),
-        range: matchCase.range,
-        pattern: this.#requiredPattern(matchCase, 0),
-        result: this.#requiredExpression(matchCase, 0),
+        range: matchArm.range,
+        pattern: this.#requiredPattern(matchArm, 0),
+        result: this.#requiredExpression(matchArm, 0),
       }));
-    const elseNode = directNodes(node).find((child) => child.kind === CstKind.MatchElse);
-    const elseBranch = elseNode === undefined ? undefined : this.#requiredExpression(elseNode, 0);
-    return elseBranch === undefined
-      ? { kind: "MatchSelectionExpression", id: this.#id(), range: node.range, subject, cases }
-      : { kind: "MatchSelectionExpression", id: this.#id(), range: node.range, subject, cases, elseBranch };
+    return { kind: "MatchSelectionExpression", id: this.#id(), range: node.range, subject, arms };
   }
 
   #pattern(node: CstNode): Pattern {

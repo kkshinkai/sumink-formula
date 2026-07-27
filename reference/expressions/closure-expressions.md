@@ -32,6 +32,17 @@ patterns. The argument values are matched against those patterns from left to
 right. A failed parameter pattern is an error. The names introduced by the
 patterns are visible only in the closure body.
 
+A closure always has explicit parameter syntax and exactly one body
+expression. Match arms do not form a separate closure expression. A function
+that selects among several patterns writes its subject explicitly:
+
+```sumi
+value -> value match {
+  0 -> "zero",
+  number -> number,
+}
+```
+
 Every invocation creates a fresh parameter scope. Parameter bindings from one
 invocation are never shared with another invocation, including recursive and
 reentrant invocations.

@@ -1,20 +1,20 @@
 fn sumTree(node) =
   node.kind match {
-    case "leaf" -> node.value
-    case "branch" -> sumTree(node.left) + sumTree(node.right)
+    "leaf" -> node.value,
+    "branch" -> sumTree(node.left) + sumTree(node.right),
   };
 
 fn mapTree(node, transform) =
   node.kind match {
-    case "leaf" -> {
+    "leaf" -> {
       kind: "leaf",
       value: transform(node.value)
-    }
-    case "branch" -> {
+    },
+    "branch" -> {
       kind: "branch",
       left: mapTree(node.left, transform),
       right: mapTree(node.right, transform)
-    }
+    },
   };
 
 let tree = {

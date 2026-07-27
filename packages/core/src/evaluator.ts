@@ -576,18 +576,15 @@ class Evaluator {
 
   #matchSelection(expression: MatchSelectionExpression, environment: Environment): RuntimeValue {
     const subject = this.#expression(expression.subject, environment);
-    for (const matchCase of expression.cases) {
+    for (const arm of expression.arms) {
       const slots = new Map<BindingId, Slot>();
-      this.#allocatePatternInto(matchCase.pattern, slots);
-      const caseEnvironment = new Environment(environment, slots);
-      if (this.#matchAndBind(matchCase.pattern, subject, caseEnvironment)) {
-        return this.#expression(matchCase.result, caseEnvironment);
+      this.#allocatePatternInto(arm.pattern, slots);
+      const armEnvironment = new Environment(environment, slots);
+      if (this.#matchAndBind(arm.pattern, subject, armEnvironment)) {
+        return this.#expression(arm.result, armEnvironment);
       }
     }
-    if (expression.elseBranch !== undefined) {
-      return this.#expression(expression.elseBranch, environment);
-    }
-    return this.#fail("SF4019", "No match case accepted the value.", expression.range);
+    return this.#fail("SF4019", "No match arm accepted the value.", expression.range);
   }
 
   #allocateBinding(nodeId: NodeId, environment: Environment): void {

@@ -162,13 +162,10 @@ class Resolver {
         return;
       case "MatchSelectionExpression":
         this.#expression(expression.subject, scope);
-        for (const matchCase of expression.cases) {
-          const caseScope = new Scope(scope);
-          this.#declarePattern(matchCase.pattern, caseScope);
-          this.#expression(matchCase.result, caseScope);
-        }
-        if (expression.elseBranch !== undefined) {
-          this.#expression(expression.elseBranch, scope);
+        for (const arm of expression.arms) {
+          const armScope = new Scope(scope);
+          this.#declarePattern(arm.pattern, armScope);
+          this.#expression(arm.result, armScope);
         }
         return;
     }
