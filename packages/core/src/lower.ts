@@ -121,7 +121,10 @@ class Lowerer {
           id: this.#id(),
           range: node.range,
           entries: directNodes(node)
-            .filter((child) => child.kind === CstKind.DictionaryEntry)
+            .filter((child) =>
+              child.kind === CstKind.DictionaryEntry
+              || child.kind === CstKind.ShorthandDictionaryEntry
+            )
             .map((child) => this.#dictionaryEntry(child)),
         };
       case CstKind.CallExpression:
@@ -196,6 +199,27 @@ class Lowerer {
   }
 
   #dictionaryEntry(node: CstNode): DictionaryEntry {
+    if (node.kind === CstKind.ShorthandDictionaryEntry) {
+      const token = requiredDirectToken(node, SyntaxKind.IdentifierToken);
+      return {
+        kind: "DictionaryEntry",
+        id: this.#id(),
+        range: node.range,
+        key: {
+          kind: "LiteralExpression",
+          id: this.#id(),
+          range: token.range,
+          value: token.value ?? "",
+        },
+        value: {
+          kind: "IdentifierExpression",
+          id: this.#id(),
+          range: token.range,
+          name: token.value ?? "",
+        },
+      };
+    }
+
     const computed = directNodes(node).find((child) => child.kind === CstKind.ComputedDictionaryKey);
     return {
       kind: "DictionaryEntry",

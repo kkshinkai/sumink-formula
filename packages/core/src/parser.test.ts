@@ -81,7 +81,7 @@ describe("parse", () => {
   });
 
   it("commits braces once using dictionary syntax as the discriminator", () => {
-    const result = parse("{}; {;}; {;;;;}; {x}; {x;}; {name: 1}; {[key]: 2}; {[key]};");
+    const result = parse("{}; {;}; {;;;;}; {x}; {x;}; {x,}; {x, y}; {name: 1}; {[key]: 2}; {[key]};");
     const kinds = childNodes(result.cst).map((statement) =>
       childNodes(statement).find((node) => isExpressionNode(node.kind))?.kind
     );
@@ -95,8 +95,73 @@ describe("parse", () => {
       CstKind.BlockExpression,
       CstKind.DictionaryExpression,
       CstKind.DictionaryExpression,
+      CstKind.DictionaryExpression,
+      CstKind.DictionaryExpression,
       CstKind.BlockExpression,
     ]);
+  });
+
+  it("preserves shorthand entries in the CST and lowers them to ordinary entries", () => {
+    const result = parse("let x = 1; let y = 2; {x, y, explicit: x, [y]: x};");
+    const statement = lower(result).program.statements[2];
+
+    expect(result.diagnostics).toEqual([]);
+    expect(descendantKinds(result.cst).filter((kind) =>
+      kind === CstKind.ShorthandDictionaryEntry
+    )).toHaveLength(2);
+    expect(statement).toMatchObject({
+      kind: "ExpressionStatement",
+      expression: {
+        kind: "DictionaryExpression",
+        entries: [
+          {
+            key: { kind: "LiteralExpression", value: "x" },
+            value: { kind: "IdentifierExpression", name: "x" },
+          },
+          {
+            key: { kind: "LiteralExpression", value: "y" },
+            value: { kind: "IdentifierExpression", name: "y" },
+          },
+          {
+            key: { kind: "LiteralExpression", value: "explicit" },
+            value: { kind: "IdentifierExpression", name: "x" },
+          },
+          {
+            key: { kind: "IdentifierExpression", name: "y" },
+            value: { kind: "IdentifierExpression", name: "x" },
+          },
+        ],
+      },
+    });
+  });
+
+  it("does not treat commas inside nested expressions as dictionary discriminators", () => {
+    const result = parse("{f(x, y)}; {[x, y]}; {if (x) f(a, b) else g(c, d)};");
+    const kinds = childNodes(result.cst).map((statement) =>
+      childNodes(statement).find((node) => isExpressionNode(node.kind))?.kind
+    );
+
+    expect(result.diagnostics).toEqual([]);
+    expect(kinds).toEqual([
+      CstKind.BlockExpression,
+      CstKind.BlockExpression,
+      CstKind.BlockExpression,
+    ]);
+  });
+
+  it("lets token-owned comments surround the shorthand discriminator", () => {
+    const source = "{value /* trailing */,}; {value /* trailing */};";
+    const result = parse(source);
+    const kinds = childNodes(result.cst).map((statement) =>
+      childNodes(statement).find((node) => isExpressionNode(node.kind))?.kind
+    );
+
+    expect(result.diagnostics).toEqual([]);
+    expect(kinds).toEqual([
+      CstKind.DictionaryExpression,
+      CstKind.BlockExpression,
+    ]);
+    expect(reconstruct(result.cst, source)).toBe(source);
   });
 
   it("does not reinterpret malformed braced syntax after choosing its form", () => {
@@ -113,10 +178,10 @@ describe("parse", () => {
   });
 
   it("parses trailing braces as ordinary single-argument calls", () => {
-    const result = parse("f {}; f {;}; f {name: 1}; f { x -> x } { 1 };");
+    const result = parse("f {}; f {;}; f {name: 1}; f {name,}; f { x -> x } { 1 };");
 
     expect(result.diagnostics).toEqual([]);
-    expect(descendantKinds(result.cst).filter((kind) => kind === CstKind.CallExpression)).toHaveLength(5);
+    expect(descendantKinds(result.cst).filter((kind) => kind === CstKind.CallExpression)).toHaveLength(6);
     expect(descendantKinds(result.cst)).toEqual(expect.arrayContaining([
       CstKind.DictionaryExpression,
       CstKind.BlockExpression,

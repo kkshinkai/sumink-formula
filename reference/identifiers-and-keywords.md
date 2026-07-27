@@ -39,5 +39,7 @@ closure bodies and branches that might not run. The external bindings read by
 one evaluation must be a subset of that static set.
 
 Member names in `value.name` and static keys in `{name: value}` are not
-identifier expressions and do not create dependencies. A computed selector or
+identifier expressions and do not create dependencies. In a shorthand entry
+such as `{name,}`, the key is the static String `"name"`, while the value is an
+identifier expression and may create a dependency. A computed selector or
 computed dictionary key is an expression and may contain dependencies.

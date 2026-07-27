@@ -32,6 +32,11 @@ const lexicalErrorFixtures: readonly RecoveryFixture[] = [
   { name: "array element", source: "[1 @ 2, 3];", preservedKinds: [CstKind.ArrayExpression] },
   { name: "dictionary value", source: "{a: 1 @ 2, b: 3};", preservedKinds: [CstKind.DictionaryExpression] },
   {
+    name: "shorthand dictionary entry",
+    source: "{item, value: 1 @ 2};",
+    preservedKinds: [CstKind.DictionaryExpression, CstKind.ShorthandDictionaryEntry],
+  },
+  {
     name: "computed dictionary key",
     source: "{[1 @ 2]: 3, b: 4};",
     preservedKinds: [CstKind.DictionaryExpression, CstKind.ComputedDictionaryKey],
@@ -89,7 +94,7 @@ const validGrammarFixtures = [
   "1 + 2 * 3 == 7 and not false;",
   "values map transform;",
   "[1, 2, 3,];",
-  "{a: 1, 'b': 2, 3: 'three', [key]: 3,};",
+  "{item,}; {item, value, a: 1, 'b': 2, 3: 'three', [key]: 3,};",
   "f(1, 2,); f { x -> x };",
   "(1 + 2);",
   "(x, y,) -> x + y; x -> x;",

@@ -393,6 +393,14 @@ class Parser {
   #parseDictionaryEntry(): CstNode {
     const start = this.#position;
     const children: StructuralElement[] = [];
+    if (
+      this.#peekKind() === SyntaxKind.IdentifierToken
+      && this.#peekKindAfterCurrent() !== SyntaxKind.ColonToken
+    ) {
+      this.#consume();
+      return this.#node(CstKind.ShorthandDictionaryEntry, start);
+    }
+
     if (this.#peekKind() === SyntaxKind.OpenBracketToken) {
       const keyStart = this.#position;
       const keyChildren: StructuralElement[] = [];
@@ -935,7 +943,9 @@ class Parser {
       || first === SyntaxKind.NumberLiteralToken
     ) {
       cursor += 1;
-      return this.#tokens[cursor]?.kind === SyntaxKind.ColonToken;
+      const next = this.#tokens[cursor]?.kind;
+      return next === SyntaxKind.ColonToken
+        || (first === SyntaxKind.IdentifierToken && next === SyntaxKind.CommaToken);
     }
     if (first !== SyntaxKind.OpenBracketToken) {
       return false;

@@ -21,6 +21,13 @@ f({;})
 f {;}
 ```
 
+The Block and Dictionary distinction remains unchanged in a braced argument:
+
+```sumi
+f {value}   // passes the result of a Block
+f {value,}  // passes {value: value}
+```
+
 Postfix forms may continue after a braced argument, including another braced
 argument. The source below has no special trailing-lambda construct:
 

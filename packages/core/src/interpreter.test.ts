@@ -196,6 +196,46 @@ describe("blocks, lambdas, and calls", () => {
 });
 
 describe("dictionary values", () => {
+  it("expands identifier shorthand without changing the singleton block form", () => {
+    expectExpression("{ let x = 1; let y = 2; {x, y} }", dictionaryValue([
+      { key: "x", value: 1 },
+      { key: "y", value: 2 },
+    ]));
+    expectExpression("{ let x = 1; {x,} }", dictionaryValue([{ key: "x", value: 1 }]));
+    expectExpression("{ let x = 1; {x} }", 1);
+  });
+
+  it("mixes shorthand, explicit, and computed dictionary entries in source order", () => {
+    const value = expressionValue([
+      "{",
+      "let name = 'Ada';",
+      "let key = ['computed'];",
+      "{name, active: true, [key]: 42}",
+      "}",
+    ].join(" "));
+
+    expect(value).toEqual(dictionaryValue([
+      { key: "name", value: "Ada" },
+      { key: "active", value: true },
+      { key: arrayValue(["computed"]), value: 42 },
+    ]));
+  });
+
+  it("uses shorthand identifiers as dependencies, not their static keys", () => {
+    const analysis = analyze("{external,};");
+
+    expect(analysis.diagnostics).toEqual([]);
+    expect([...analysis.resolution.dependencies]).toEqual(["external"]);
+  });
+
+  it("distinguishes shorthand dictionaries from block trailing arguments", () => {
+    expectExpression(
+      "{ let x = 7; fn identity(value) = value; identity {x,} }",
+      dictionaryValue([{ key: "x", value: 7 }]),
+    );
+    expectExpression("{ let x = 7; fn identity(value) = value; identity {x} }", 7);
+  });
+
   it("constructs static and arbitrary computed keys", () => {
     const value = expressionValue("{name: 'Ada', 1: 'one', [[1, 2]]: 'pair'}");
     expect(isDictionaryValue(value)).toBe(true);

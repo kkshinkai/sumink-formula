@@ -13,7 +13,7 @@ describe("grammar conformance", () => {
     ["empty statements", ";;;;;;"],
     ["literal expressions", "nil; true; false; 0; 42; 3.14; 1e6; 1E-6; 'text'; \"text\";"],
     ["array expressions", "[]; [1]; [1, 2, 3,];"],
-    ["dictionary expressions", "{}; {name: 'Ada'}; {'name': 1, 2: 'two', [key]: 2,};"],
+    ["dictionary expressions", "{}; {name: 'Ada'}; {name,}; {name, value}; {name, value: 1, [key]: 2}; {'name': 1, 2: 'two', [key]: 2,};"],
     ["ordinary calls", "function(); function(1); function(1, 2,);"],
     ["trailing brace calls", "function {}; function {;}; function { x -> x };"],
     ["infix calls", "source transform closure map mapper;"],
@@ -36,7 +36,7 @@ describe("grammar conformance", () => {
     const analysis = analyze([
       "let make = x -> () -> x;",
       "let value = make(input);",
-      "value() match { case 0 -> {kind: 'zero'} case n -> {[kind]: n} };",
+      "value() match { case 0 -> {kind: 'zero'} case n -> {n, [kind]: n} };",
     ].join(" "));
     const ids = collectNodeIds(analysis.program);
 
