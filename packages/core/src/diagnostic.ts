@@ -1,12 +1,13 @@
 import type { TextRange } from "./text.js";
 
 export type DiagnosticCategory = "error" | "warning";
-export type DiagnosticPhase = "lex" | "parse" | "resolve" | "evaluate";
+export type DiagnosticPhase = "lex" | "parse" | "load" | "link" | "resolve" | "evaluate";
 export type DiagnosticCode =
   | "SF1000" | "SF1001" | "SF1002" | "SF1003" | "SF1004" | "SF1005" | "SF1006" | "SF1007"
   | "SF1008"
   | "SF2000" | "SF2001" | "SF2002" | "SF2003" | "SF2004" | "SF2006" | "SF2007" | "SF2008"
-  | "SF3000"
+  | "SF3000" | "SF3001"
+  | "SF3100" | "SF3101" | "SF3102" | "SF3103" | "SF3104" | "SF3105" | "SF3106" | "SF3107"
   | "SF4000" | "SF4001" | "SF4002" | "SF4003" | "SF4004" | "SF4005" | "SF4006"
   | "SF4007" | "SF4008" | "SF4009" | "SF4010" | "SF4011" | "SF4012" | "SF4013"
   | "SF4014" | "SF4015" | "SF4016" | "SF4018" | "SF4019"
@@ -16,6 +17,7 @@ export type DiagnosticCode =
 export interface RelatedDiagnosticInformation {
   readonly message: string;
   readonly range: TextRange;
+  readonly sourceName?: string;
 }
 
 /** A stable, serializable language diagnostic. */
@@ -26,6 +28,7 @@ export interface Diagnostic {
   readonly phase: DiagnosticPhase;
   readonly message: string;
   readonly range: TextRange;
+  readonly sourceName?: string;
   readonly relatedInformation?: readonly RelatedDiagnosticInformation[];
 }
 
@@ -61,9 +64,13 @@ function phaseOrder(phase: DiagnosticPhase): number {
       return 0;
     case "parse":
       return 1;
-    case "resolve":
+    case "load":
       return 2;
-    case "evaluate":
+    case "link":
       return 3;
+    case "resolve":
+      return 4;
+    case "evaluate":
+      return 5;
   }
 }

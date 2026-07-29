@@ -16,3 +16,9 @@ print("Hello, world!");
 ```
 
 Use `sumi --help` for the complete first-version command syntax.
+
+The entry file is parsed as an executable Program. `import {...} from "path"`
+loads declaration-only File Modules. The CLI resolves each relative specifier
+against the referring file, canonicalizes it through the host filesystem, and
+does not infer extensions or directory indexes. Diagnostics and call notes use
+the canonical path of the source that produced them.

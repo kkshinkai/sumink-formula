@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +38,7 @@ describe("built sumi process", () => {
       + "{[[1, {\"name\": \"Ada\"}]]: \"new\", \"middle\": 0}\nsame closure\nnil\n",
     ],
     ["trailing-blocks.sumi", "42\nyes\nAda\nnil\n{}\n"],
+    ["modules.sumi", "42\npx\n[6, 8]\n2\n"],
   ])("runs the repository example %s", (name, expectedOutput) => {
     const result = runNodeCli([join(workspaceRoot, "examples", name)]);
 
@@ -64,26 +65,50 @@ describe("built sumi process", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("loads relative File Modules and locates cross-file runtime errors", () => {
+    writeSource("math.sumi", "export fn twice(value) = value * 2;");
+    const main = writeSource(
+      "modules.sumi",
+      "import {twice} from './math.sumi'; print(twice(21));",
+    );
+    const success = runNodeCli([main]);
+    expect(success.status).toBe(0);
+    expect(success.stdout).toBe("42\n");
+    expect(success.stderr).toBe("");
+
+    const broken = writeSource("broken.sumi", "export let value = 1();");
+    const brokenMain = writeSource(
+      "broken-main.sumi",
+      "import {value} from './broken.sumi'; print(value);",
+    );
+    const failure = runNodeCli([brokenMain]);
+    expect(failure.status).toBe(1);
+    expect(failure.stdout).toBe("");
+    expect(failure.stderr).toContain(
+      `${realpathSync(broken)}:1:20 - error SF4008: Only function values can be called.`,
+    );
+  });
+
   it("reports front-end and runtime failures through the built executable", () => {
     const lexicalFile = writeSource("lexical.sumi", "@;");
     const lexicalResult = runNodeCli([lexicalFile]);
     expect(lexicalResult.status).toBe(1);
-    expect(lexicalResult.stderr).toContain(`${lexicalFile}:1:1 - error SF1000:`);
+    expect(lexicalResult.stderr).toContain(`${realpathSync(lexicalFile)}:1:1 - error SF1000:`);
 
     const syntaxFile = writeSource("syntax.sumi", "(");
     const syntaxResult = runNodeCli([syntaxFile]);
     expect(syntaxResult.status).toBe(1);
-    expect(syntaxResult.stderr).toContain(`${syntaxFile}:1:2 - error SF`);
+    expect(syntaxResult.stderr).toContain(`${realpathSync(syntaxFile)}:1:2 - error SF`);
 
     const resolverFile = writeSource("resolver.sumi", "let value = 1; let value = 2;");
     const resolverResult = runNodeCli([resolverFile]);
     expect(resolverResult.status).toBe(1);
-    expect(resolverResult.stderr).toContain(`${resolverFile}:1:20 - error SF3000:`);
+    expect(resolverResult.stderr).toContain(`${realpathSync(resolverFile)}:1:20 - error SF3000:`);
 
-    const runtimeFile = writeSource("runtime.sumi", "missing;");
+    const runtimeFile = writeSource("runtime.sumi", "1();");
     const runtimeResult = runNodeCli([runtimeFile]);
     expect(runtimeResult.status).toBe(1);
-    expect(runtimeResult.stderr).toContain(`${runtimeFile}:1:1 - error SF4003:`);
+    expect(runtimeResult.stderr).toContain(`${realpathSync(runtimeFile)}:1:1 - error SF4008:`);
   });
 
   it("reports missing files and invalid invocation with distinct statuses", () => {

@@ -7,6 +7,7 @@ This reference defines the first version of the Sumi language.
 - [Identifiers and keywords](./reference/identifiers-and-keywords.md)
 - [Values](./reference/values.md)
 - [Programs](./reference/programs.md)
+- [Modules](./reference/modules.md)
 - [Statements](./reference/statements/README.md)
   - [Empty statements](./reference/statements/empty-statements.md)
   - [`let` statements](./reference/statements/let-statements.md)

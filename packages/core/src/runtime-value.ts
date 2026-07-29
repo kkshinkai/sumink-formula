@@ -1,5 +1,13 @@
 export type RuntimeValue = null | boolean | number | string | ArrayValue | DictionaryValue | FunctionValue;
 
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly JsonValue[]
+  | { readonly [key: string]: JsonValue };
+
 export interface ArrayValue {
   readonly kind: "array";
   readonly elements: readonly RuntimeValue[];
@@ -61,6 +69,216 @@ export function dictionaryValue(entries: readonly RuntimeDictionaryEntry[]): Dic
     throw new TypeError("Failed to construct a dictionary runtime value.");
   }
   return value;
+}
+
+/** Copies JSON-shaped host data into Sumi's closed immutable value model. */
+export function runtimeValueFromJson(value: JsonValue): RuntimeValue {
+  try {
+    return convertJsonValue(value);
+  } catch (error: unknown) {
+    if (error instanceof JsonConversionFailure) {
+      throw new TypeError(error.message);
+    }
+    throw new TypeError("Failed to inspect the host JSON value.");
+  }
+}
+
+type JsonConversionFrame =
+  | {
+      readonly kind: "visit";
+      readonly source: unknown;
+      readonly assign: (value: RuntimeValue) => void;
+    }
+  | {
+      readonly kind: "finish-array";
+      readonly source: readonly unknown[];
+      readonly elements: (RuntimeValue | undefined)[];
+      readonly assign: (value: RuntimeValue) => void;
+    }
+  | {
+      readonly kind: "finish-object";
+      readonly source: object;
+      readonly keys: readonly string[];
+      readonly values: (RuntimeValue | undefined)[];
+      readonly assign: (value: RuntimeValue) => void;
+    };
+
+class JsonConversionFailure extends Error {}
+
+function convertJsonValue(source: unknown): RuntimeValue {
+  let result: RuntimeValue | undefined;
+  let assigned = false;
+  const active = new WeakSet<object>();
+  const converted = new WeakMap<object, RuntimeValue>();
+  const frames: JsonConversionFrame[] = [{
+    kind: "visit",
+    source,
+    assign: (value) => {
+      result = value;
+      assigned = true;
+    },
+  }];
+
+  while (frames.length > 0) {
+    const frame = frames.pop();
+    if (frame === undefined) {
+      continue;
+    }
+
+    if (frame.kind === "finish-array") {
+      const elements = frame.elements.map((element) => {
+        if (element === undefined) {
+          throw new JsonConversionFailure("A JSON array element was not converted.");
+        }
+        return element;
+      });
+      const value = arrayValue(elements);
+      active.delete(frame.source);
+      converted.set(frame.source, value);
+      frame.assign(value);
+      continue;
+    }
+
+    if (frame.kind === "finish-object") {
+      const entries = frame.keys.map((key, index): RuntimeDictionaryEntry => {
+        const value = frame.values[index];
+        if (value === undefined) {
+          throw new JsonConversionFailure(`JSON property '${key}' was not converted.`);
+        }
+        return { key, value };
+      });
+      const value = dictionaryValue(entries);
+      active.delete(frame.source);
+      converted.set(frame.source, value);
+      frame.assign(value);
+      continue;
+    }
+
+    const current = frame.source;
+    if (
+      current === null
+      || typeof current === "boolean"
+      || typeof current === "string"
+    ) {
+      frame.assign(current);
+      continue;
+    }
+    if (typeof current === "number") {
+      if (!Number.isFinite(current)) {
+        throw new JsonConversionFailure("A JSON number must be finite.");
+      }
+      frame.assign(current);
+      continue;
+    }
+    if (typeof current !== "object") {
+      throw new JsonConversionFailure(`JSON values cannot contain ${typeof current}.`);
+    }
+
+    const prior = converted.get(current);
+    if (prior !== undefined) {
+      frame.assign(prior);
+      continue;
+    }
+    if (active.has(current)) {
+      throw new JsonConversionFailure("JSON values cannot contain cycles.");
+    }
+
+    if (Array.isArray(current)) {
+      validateJsonArray(current);
+      active.add(current);
+      const elements: (RuntimeValue | undefined)[] = new Array(current.length);
+      frames.push({ kind: "finish-array", source: current, elements, assign: frame.assign });
+      for (let index = current.length - 1; index >= 0; index -= 1) {
+        const elementIndex = index;
+        frames.push({
+          kind: "visit",
+          source: current[elementIndex],
+          assign: (value) => {
+            elements[elementIndex] = value;
+          },
+        });
+      }
+      continue;
+    }
+
+    validateJsonObject(current);
+    active.add(current);
+    const keys = Object.keys(current);
+    const values: (RuntimeValue | undefined)[] = new Array(keys.length);
+    frames.push({ kind: "finish-object", source: current, keys, values, assign: frame.assign });
+    for (let index = keys.length - 1; index >= 0; index -= 1) {
+      const valueIndex = index;
+      const key = keys[valueIndex];
+      if (key === undefined) {
+        throw new JsonConversionFailure("A JSON object key became unavailable.");
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(current, key);
+      if (descriptor === undefined || !("value" in descriptor)) {
+        throw new JsonConversionFailure(`JSON property '${key}' must be a data property.`);
+      }
+      frames.push({
+        kind: "visit",
+        source: descriptor.value,
+        assign: (value) => {
+          values[valueIndex] = value;
+        },
+      });
+    }
+  }
+
+  if (!assigned || result === undefined) {
+    throw new JsonConversionFailure("The JSON value did not produce a runtime value.");
+  }
+  return result;
+}
+
+function validateJsonArray(value: readonly unknown[]): void {
+  const keys = Reflect.ownKeys(value);
+  for (const key of keys) {
+    if (key === "length") {
+      continue;
+    }
+    if (typeof key !== "string" || !isCanonicalArrayIndex(key, value.length)) {
+      throw new JsonConversionFailure("JSON arrays cannot contain custom properties.");
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+      throw new JsonConversionFailure("JSON array elements must be enumerable data properties.");
+    }
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) {
+      throw new JsonConversionFailure("JSON arrays cannot contain holes.");
+    }
+  }
+}
+
+function validateJsonObject(value: object): void {
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new JsonConversionFailure("A JSON object must have a plain or null prototype.");
+  }
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") {
+      throw new JsonConversionFailure("JSON objects cannot contain symbol properties.");
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (
+      descriptor === undefined
+      || !("value" in descriptor)
+      || !descriptor.enumerable
+    ) {
+      throw new JsonConversionFailure(`JSON property '${key}' must be an enumerable data property.`);
+    }
+  }
+}
+
+function isCanonicalArrayIndex(value: string, length: number): boolean {
+  const index = Number(value);
+  return Number.isSafeInteger(index)
+    && index >= 0
+    && index < length
+    && String(index) === value;
 }
 
 export function getDictionaryEntry(

@@ -35,6 +35,36 @@ describe("runCli", () => {
     expect(host.stderr).toBe("");
   });
 
+  it("loads File Modules through the host and reports their own source names", () => {
+    const successHost = new FakeHost({
+      "main.sumi": "import {greet} from './greet.sumi'; print(greet('Ada'));",
+      "./greet.sumi": "export fn greet(name) = 'Hello, ' + name;",
+    });
+    expect(runCli(["main.sumi"], successHost)).toBe(ExitStatus.Success);
+    expect(successHost.stdout).toBe("Hello, Ada\n");
+    expect(successHost.stderr).toBe("");
+
+    const failureHost = new FakeHost({
+      "main.sumi": "import {value} from './broken.sumi'; print(value);",
+      "./broken.sumi": "export let value = 1();",
+    });
+    expect(runCli(["main.sumi"], failureHost)).toBe(ExitStatus.ProgramError);
+    expect(failureHost.stdout).toBe("");
+    expect(failureHost.stderr).toBe(
+      "./broken.sumi:1:20 - error SF4008: Only function values can be called.\n",
+    );
+
+    const callHost = new FakeHost({
+      "main.sumi": "import {fail} from './call.sumi'; fail();",
+      "./call.sumi": "export fn fail() = 1();",
+    });
+    expect(runCli(["main.sumi"], callHost)).toBe(ExitStatus.ProgramError);
+    expect(callHost.stderr).toBe(
+      "./call.sumi:1:20 - error SF4008: Only function values can be called.\n"
+      + "main.sumi:1:35 - note: Called from here.\n",
+    );
+  });
+
   it("prints structured values and reports functions deterministically", () => {
     const host = new FakeHost({
       "values.sumi": "print([1, {name: 'Ada'}]); print((value) -> value);",
@@ -88,13 +118,13 @@ describe("runCli", () => {
 
   it("retains output produced before a later runtime error", () => {
     const host = new FakeHost({
-      "runtime.sumi": "print('written');\nmissing;",
+      "runtime.sumi": "print('written');\n1();",
     });
 
     expect(runCli(["runtime.sumi"], host)).toBe(ExitStatus.ProgramError);
     expect(host.stdout).toBe("written\n");
     expect(host.stderr).toBe(
-      "runtime.sumi:2:1 - error SF4003: No value was provided for external binding 'missing'.\n",
+      "runtime.sumi:2:1 - error SF4008: Only function values can be called.\n",
     );
   });
 
@@ -171,6 +201,8 @@ class FakeHost implements CliHost {
     }
     return this.#files[path] ?? "";
   };
+
+  public resolvePath = (specifier: string): string => specifier;
 
   public writeStdout = (text: string): void => {
     this.stdout += text;

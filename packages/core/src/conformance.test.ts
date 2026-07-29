@@ -1,10 +1,21 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import type { Expression, NodeId, Pattern, Program, Statement } from "./ast.js";
+import type {
+  ExportDeclaration,
+  Expression,
+  ImportDeclaration,
+  ModuleDeclaration,
+  ModuleItem,
+  NodeId,
+  Pattern,
+  Program,
+  ProgramItem,
+  Statement,
+} from "./ast.js";
 import type { CstNode } from "./cst.js";
 import { analyze } from "./interpreter.js";
-import { parse } from "./parser.js";
+import { parse, parseExpression } from "./parser.js";
 import { SyntaxKind } from "./syntax-kind.js";
 import { tokenFullRange, type SyntaxToken } from "./token.js";
 
@@ -28,12 +39,15 @@ describe("grammar conformance", () => {
     ["match tests", "value match 1; value match _;"],
     ["match selections", "value match { 0 -> 'zero', x -> x, _ -> nil, };"],
     ["comments", "// line\n1; /* outer /* nested */ outer */ 2;"],
+    ["modules", "module values { export let answer = 42; } import values.{answer}; answer;"],
   ])("accepts every approved %s form", (_description, source) => {
     expect(analyze(source).diagnostics).toEqual([]);
   });
 
   it("assigns every semantic node exactly one unique identity", () => {
     const analysis = analyze([
+      "module constants { export let zero = 0; }",
+      "import constants.{zero};",
       "let make = x -> () -> x;",
       "let value = make(input);",
       "value() match { 0 -> {kind: 'zero'}, n -> {n, [kind]: n}, };",
@@ -68,12 +82,86 @@ describe("grammar conformance", () => {
       { numRuns: 1_000, seed: 0x51a6e },
     );
   });
+
+  it("keeps standalone expression parsing lossless and bounded for arbitrary UTF-16 input", () => {
+    fc.assert(
+      fc.property(arbitraryUtf16String(80), (source) => {
+        const result = parseExpression(source);
+        expect(reconstructCst(result.cst, source)).toBe(source);
+        expect(flattenCstTokens(result.cst)).toEqual(result.tokens);
+        for (const entry of result.diagnostics) {
+          expect(entry.range.start).toBeGreaterThanOrEqual(0);
+          expect(entry.range.end).toBeGreaterThanOrEqual(entry.range.start);
+          expect(entry.range.end).toBeLessThanOrEqual(source.length);
+        }
+      }),
+      { numRuns: 1_000, seed: 0x51a6e1 },
+    );
+  });
 });
 
 function collectNodeIds(program: Program): NodeId[] {
   const ids: NodeId[] = [program.id];
-  program.statements.forEach((statement) => collectStatement(statement, ids));
+  program.items.forEach((item) => collectProgramItem(item, ids));
   return ids;
+}
+
+function collectProgramItem(item: ProgramItem, ids: NodeId[]): void {
+  if (isStatement(item)) {
+    collectStatement(item, ids);
+  } else if (item.kind === "ImportDeclaration") {
+    collectImport(item, ids);
+  } else {
+    collectModule(item, ids);
+  }
+}
+
+function collectModuleItem(item: ModuleItem, ids: NodeId[]): void {
+  if (item.kind === "LetStatement" || item.kind === "FnStatement") {
+    collectStatement(item, ids);
+  } else if (item.kind === "ImportDeclaration") {
+    collectImport(item, ids);
+  } else if (item.kind === "ExportDeclaration") {
+    collectExport(item, ids);
+  } else {
+    collectModule(item, ids);
+  }
+}
+
+function collectImport(declaration: ImportDeclaration, ids: NodeId[]): void {
+  ids.push(declaration.id);
+  if (declaration.modulePath !== undefined) {
+    ids.push(declaration.modulePath.id);
+  }
+  if (declaration.clause.kind === "MemberImportClause") {
+    declaration.clause.selectors.forEach((selector) => ids.push(selector.id));
+  }
+}
+
+function collectExport(declaration: ExportDeclaration, ids: NodeId[]): void {
+  ids.push(declaration.id);
+  if (declaration.declaration !== undefined) {
+    if (declaration.declaration.kind === "ModuleDeclaration") {
+      collectModule(declaration.declaration, ids);
+    } else {
+      collectStatement(declaration.declaration, ids);
+    }
+  }
+  if (declaration.modulePath !== undefined) {
+    ids.push(declaration.modulePath.id);
+  }
+  declaration.selectors?.forEach((selector) => ids.push(selector.id));
+}
+
+function collectModule(declaration: ModuleDeclaration, ids: NodeId[]): void {
+  ids.push(declaration.id);
+  declaration.items.forEach((item) => collectModuleItem(item, ids));
+}
+
+function isStatement(item: ProgramItem): item is Statement {
+  return item.kind === "LetStatement"
+    || item.kind === "FnStatement"
+    || item.kind === "ExpressionStatement";
 }
 
 function collectStatement(statement: Statement, ids: NodeId[]): void {

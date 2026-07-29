@@ -16,7 +16,7 @@ import {
   type DiagnosticCode,
   type RelatedDiagnosticInformation,
 } from "./diagnostic.js";
-import type { BindingId, Resolution } from "./resolver.js";
+import type { BindingId, Resolution, ResolvedReference } from "./resolver.js";
 import {
   arrayValue,
   callableState,
@@ -41,10 +41,22 @@ export interface EvaluateOptions {
   readonly maxSteps?: number;
   /** Maximum nested formula call depth. Defaults to 512. */
   readonly maxCallDepth?: number;
+  /** @internal Shared by all evaluators in one linked module graph. */
+  readonly dependencySink?: Set<string>;
+  /** @internal Source identity used for cross-module diagnostics. */
+  readonly sourceName?: string;
 }
 
 export type EvaluationResult =
   | { readonly ok: true; readonly value: RuntimeValue; readonly usedDependencies: ReadonlySet<string> }
+  | { readonly ok: false; readonly diagnostic: Diagnostic; readonly usedDependencies: ReadonlySet<string> };
+
+export type ModuleEvaluationResult =
+  | {
+      readonly ok: true;
+      readonly exports: ReadonlyMap<string, RuntimeValue>;
+      readonly usedDependencies: ReadonlySet<string>;
+    }
   | { readonly ok: false; readonly diagnostic: Diagnostic; readonly usedDependencies: ReadonlySet<string> };
 
 export function evaluate(
@@ -62,7 +74,49 @@ export function evaluate(
     normalizeGlobals(options.globals),
     normalizeLimit(options.maxSteps, 100_000, "maxSteps"),
     normalizeLimit(options.maxCallDepth, 512, "maxCallDepth"),
-  ).evaluate(program);
+    options.dependencySink,
+    options.sourceName,
+  ).evaluateProgram(program);
+}
+
+export function evaluateExpression(
+  expression: Expression,
+  resolution: Resolution,
+  options: EvaluateOptions = {},
+): EvaluationResult {
+  const existingDiagnostic = resolution.diagnostics.find((entry) => entry.category === "error");
+  if (existingDiagnostic !== undefined) {
+    return { ok: false, diagnostic: existingDiagnostic, usedDependencies: new Set() };
+  }
+
+  return new Evaluator(
+    resolution,
+    normalizeGlobals(options.globals),
+    normalizeLimit(options.maxSteps, 100_000, "maxSteps"),
+    normalizeLimit(options.maxCallDepth, 512, "maxCallDepth"),
+    options.dependencySink,
+    options.sourceName,
+  ).evaluateExpression(expression);
+}
+
+export function evaluateModule(
+  statements: readonly Statement[],
+  resolution: Resolution,
+  exportedBindings: ReadonlyMap<string, BindingId>,
+  options: EvaluateOptions = {},
+): ModuleEvaluationResult {
+  const existingDiagnostic = resolution.diagnostics.find((entry) => entry.category === "error");
+  if (existingDiagnostic !== undefined) {
+    return { ok: false, diagnostic: existingDiagnostic, usedDependencies: new Set() };
+  }
+  return new Evaluator(
+    resolution,
+    normalizeGlobals(options.globals),
+    normalizeLimit(options.maxSteps, 100_000, "maxSteps"),
+    normalizeLimit(options.maxCallDepth, 512, "maxCallDepth"),
+    options.dependencySink,
+    options.sourceName,
+  ).evaluateModule(statements, exportedBindings);
 }
 
 class Slot {
@@ -120,6 +174,13 @@ interface ClosureState {
   readonly resolution: Resolution;
   readonly globals: ReadonlyMap<string, RuntimeValue>;
   readonly owner: object;
+  readonly dependencySink: Set<string>;
+  readonly sourceName?: string;
+}
+
+interface CallFrame {
+  readonly range: TextRange;
+  readonly sourceName?: string;
 }
 
 class EvaluationFailure extends Error {
@@ -135,13 +196,14 @@ class EvaluationFailure extends Error {
 class Evaluator {
   #resolution: Resolution;
   #globals: ReadonlyMap<string, RuntimeValue>;
-  readonly #callStack: TextRange[] = [];
-  readonly #usedDependencies = new Set<string>();
+  readonly #callStack: CallFrame[] = [];
+  readonly #usedDependencies: Set<string>;
   readonly #maxSteps: number;
   readonly #maxCallDepth: number;
   readonly #evaluationOwner = Object.freeze({});
   #activeOwner: object;
   #trackExternalDependencies = true;
+  #sourceName: string | undefined;
   #steps = 0;
 
   public constructor(
@@ -149,30 +211,75 @@ class Evaluator {
     globals: ReadonlyMap<string, RuntimeValue>,
     maxSteps: number,
     maxCallDepth: number,
+    dependencySink?: Set<string>,
+    sourceName?: string,
   ) {
     this.#resolution = resolution;
     this.#globals = globals;
     this.#maxSteps = maxSteps;
     this.#maxCallDepth = maxCallDepth;
+    this.#usedDependencies = dependencySink ?? new Set();
+    this.#sourceName = sourceName;
     this.#activeOwner = this.#evaluationOwner;
   }
 
-  public evaluate(program: Program): EvaluationResult {
+  public evaluateProgram(program: Program): EvaluationResult {
+    return this.#run(
+      program.range,
+      () => this.#scope(program.items.filter(isStatement)),
+    );
+  }
+
+  public evaluateExpression(expression: Expression): EvaluationResult {
+    return this.#run(expression.range, () => this.#expression(expression, new Environment()));
+  }
+
+  public evaluateModule(
+    statements: readonly Statement[],
+    exportedBindings: ReadonlyMap<string, BindingId>,
+  ): ModuleEvaluationResult {
+    const range: TextRange = statements.length === 0
+      ? { start: 0, end: 0 }
+      : {
+          start: statements[0]?.range.start ?? 0,
+          end: statements.at(-1)?.range.end ?? 0,
+        };
     try {
-      this.#scope(program.statements);
-      return { ok: true, value: null, usedDependencies: this.#usedDependencies };
+      const environment = this.#executeScope(statements);
+      const exports = new Map<string, RuntimeValue>();
+      for (const [name, bindingId] of exportedBindings) {
+        const slot = environment.slot(bindingId);
+        if (slot === undefined) {
+          this.#fail("SF4004", `Export '${name}' has no runtime slot.`, range);
+        }
+        if (!slot.initialized) {
+          this.#fail("SF4005", `Export '${name}' was read before initialization.`, range);
+        }
+        exports.set(name, slot.read());
+      }
+      return { ok: true, exports, usedDependencies: this.#usedDependencies };
     } catch (error: unknown) {
       if (error instanceof EvaluationFailure) {
         return { ok: false, diagnostic: error.diagnostic, usedDependencies: this.#usedDependencies };
       }
       return {
         ok: false,
-        diagnostic: diagnostic(
-          "SF4999",
-          "evaluate",
-          "Internal evaluator failure.",
-          program.range,
-        ),
+        diagnostic: this.#diagnostic("SF4999", "Internal evaluator failure.", range),
+        usedDependencies: this.#usedDependencies,
+      };
+    }
+  }
+
+  #run(range: TextRange, action: () => RuntimeValue): EvaluationResult {
+    try {
+      return { ok: true, value: action(), usedDependencies: this.#usedDependencies };
+    } catch (error: unknown) {
+      if (error instanceof EvaluationFailure) {
+        return { ok: false, diagnostic: error.diagnostic, usedDependencies: this.#usedDependencies };
+      }
+      return {
+        ok: false,
+        diagnostic: this.#diagnostic("SF4999", "Internal evaluator failure.", range),
         usedDependencies: this.#usedDependencies,
       };
     }
@@ -183,6 +290,11 @@ class Evaluator {
     parent?: Environment,
     result?: Expression,
   ): RuntimeValue {
+    const environment = this.#executeScope(statements, parent);
+    return result === undefined ? null : this.#expression(result, environment);
+  }
+
+  #executeScope(statements: readonly Statement[], parent?: Environment): Environment {
     const environment = new Environment(parent);
 
     for (const statement of statements) {
@@ -201,7 +313,7 @@ class Evaluator {
     for (const statement of statements) {
       this.#statement(statement, environment);
     }
-    return result === undefined ? null : this.#expression(result, environment);
+    return environment;
   }
 
   #statement(statement: Statement, environment: Environment): void {
@@ -258,40 +370,7 @@ class Evaluator {
         if (reference === undefined) {
           return this.#fail("SF4002", "Identifier was not resolved.", expression.range);
         }
-        if (reference.kind === "external") {
-          if (this.#trackExternalDependencies) {
-            this.#usedDependencies.add(reference.name);
-          }
-          if (!this.#globals.has(reference.name)) {
-            return this.#fail(
-              "SF4003",
-              `No value was provided for external binding '${reference.name}'.`,
-              expression.range,
-            );
-          }
-          const value: unknown = this.#globals.get(reference.name);
-          if (!isRuntimeValue(value)) {
-            return this.#fail(
-              "SF4026",
-              `External binding '${reference.name}' is not a valid immutable runtime value.`,
-              expression.range,
-            );
-          }
-          return value;
-        }
-
-        const slot = environment.slot(reference.bindingId);
-        if (slot === undefined) {
-          return this.#fail("SF4004", "Resolved lexical binding has no runtime slot.", expression.range);
-        }
-        if (!slot.initialized) {
-          return this.#fail(
-            "SF4005",
-            "A lexical binding was read before it was initialized.",
-            expression.range,
-          );
-        }
-        return slot.read();
+        return this.#readReference(reference, environment, expression.range);
       }
       case "ArrayExpression":
         return arrayValue(expression.elements.map((element) => this.#expression(element, environment)));
@@ -335,6 +414,10 @@ class Evaluator {
       case "InfixOperatorExpression":
         return this.#infix(expression.operator, expression.left, expression.right, environment, expression.range);
       case "FieldSelectorExpression": {
+        const reference = this.#resolution.references.get(expression.id);
+        if (reference !== undefined) {
+          return this.#readReference(reference, environment, expression.range);
+        }
         const receiver = this.#expression(expression.receiver, environment);
         if (!isDictionaryValue(receiver)) {
           return this.#fail("SF4006", "Field selection requires a dictionary value.", expression.receiver.range);
@@ -354,6 +437,43 @@ class Evaluator {
       case "MatchSelectionExpression":
         return this.#matchSelection(expression, environment);
     }
+  }
+
+  #readReference(
+    reference: ResolvedReference,
+    environment: Environment,
+    range: TextRange,
+  ): RuntimeValue {
+    if (reference.kind === "external") {
+      if (this.#trackExternalDependencies && reference.dependencyName !== undefined) {
+        this.#usedDependencies.add(reference.dependencyName);
+      }
+      if (!this.#globals.has(reference.name)) {
+        return this.#fail(
+          "SF4003",
+          `No value was provided for external binding '${reference.displayName}'.`,
+          range,
+        );
+      }
+      const value: unknown = this.#globals.get(reference.name);
+      if (!isRuntimeValue(value)) {
+        return this.#fail(
+          "SF4026",
+          `External binding '${reference.displayName}' is not a valid immutable runtime value.`,
+          range,
+        );
+      }
+      return value;
+    }
+
+    const slot = environment.slot(reference.bindingId);
+    if (slot === undefined) {
+      return this.#fail("SF4004", "Resolved lexical binding has no runtime slot.", range);
+    }
+    if (!slot.initialized) {
+      return this.#fail("SF4005", "A lexical binding was read before it was initialized.", range);
+    }
+    return slot.read();
   }
 
   #closure(expression: ClosureExpression, environment: Environment): FunctionValue {
@@ -379,6 +499,8 @@ class Evaluator {
       resolution: this.#resolution,
       globals: this.#globals,
       owner: this.#activeOwner,
+      dependencySink: this.#usedDependencies,
+      ...(this.#sourceName === undefined ? {} : { sourceName: this.#sourceName }),
     } satisfies ClosureState));
     return value;
   }
@@ -408,7 +530,10 @@ class Evaluator {
       );
     }
 
-    this.#callStack.push(range);
+    this.#callStack.push({
+      range,
+      ...(this.#sourceName === undefined ? {} : { sourceName: this.#sourceName }),
+    });
     try {
       if (isNativeCallable(state)) {
         return this.#callNative(state.implementation, arguments_, range);
@@ -422,10 +547,12 @@ class Evaluator {
       const previousGlobals = this.#globals;
       const previousOwner = this.#activeOwner;
       const previousTracking = this.#trackExternalDependencies;
+      const previousSourceName = this.#sourceName;
       this.#resolution = closure.resolution;
       this.#globals = closure.globals;
       this.#activeOwner = closure.owner;
-      this.#trackExternalDependencies = closure.owner === this.#evaluationOwner;
+      this.#trackExternalDependencies = closure.dependencySink === this.#usedDependencies;
+      this.#sourceName = closure.sourceName;
       try {
         const slots = new Map<BindingId, Slot>();
         closure.parameters.forEach((parameter) => this.#allocatePatternInto(parameter, slots));
@@ -442,6 +569,7 @@ class Evaluator {
         this.#globals = previousGlobals;
         this.#activeOwner = previousOwner;
         this.#trackExternalDependencies = previousTracking;
+        this.#sourceName = previousSourceName;
       }
     } finally {
       this.#callStack.pop();
@@ -667,8 +795,22 @@ class Evaluator {
       ? undefined
       : [...this.#callStack]
           .reverse()
-          .map((callRange) => ({ message: "Called from here.", range: callRange }));
-    throw new EvaluationFailure(diagnostic(code, "evaluate", message, range, relatedInformation));
+          .map((call) => ({
+            message: "Called from here.",
+            range: call.range,
+            ...(call.sourceName === undefined ? {} : { sourceName: call.sourceName }),
+          }));
+    throw new EvaluationFailure(this.#diagnostic(code, message, range, relatedInformation));
+  }
+
+  #diagnostic(
+    code: DiagnosticCode,
+    message: string,
+    range: TextRange,
+    relatedInformation?: readonly RelatedDiagnosticInformation[],
+  ): Diagnostic {
+    const value = diagnostic(code, "evaluate", message, range, relatedInformation);
+    return this.#sourceName === undefined ? value : { ...value, sourceName: this.#sourceName };
   }
 }
 
@@ -708,7 +850,14 @@ function isNativeCallable(state: object): state is { readonly kind: "native"; re
 function isClosureState(state: object): state is ClosureState {
   return "kind" in state && state.kind === "closure"
     && "parameters" in state && "body" in state && "environment" in state
-    && "resolution" in state && "globals" in state && "owner" in state;
+    && "resolution" in state && "globals" in state && "owner" in state
+    && "dependencySink" in state;
+}
+
+function isStatement(item: Program["items"][number]): item is Statement {
+  return item.kind === "LetStatement"
+    || item.kind === "FnStatement"
+    || item.kind === "ExpressionStatement";
 }
 
 function comparePrimitive<T extends number | string>(

@@ -1,0 +1,6 @@
+export fn scale(vector, factor) = [
+  vector[0] * factor,
+  vector[1] * factor,
+];
+
+export let dimensions = 2;

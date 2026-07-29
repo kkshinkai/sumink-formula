@@ -1,4 +1,9 @@
-import { interpret, nativeFunction, SourceText } from "@sumink-formula/core";
+import {
+  defineEnvironment,
+  hostFunction,
+  SourceText,
+  type FileModuleLoader,
+} from "@sumink-formula/core";
 
 import { parseCommandLine } from "./command-line.js";
 import { formatCliError, formatDiagnostic } from "./format-diagnostic.js";
@@ -13,6 +18,7 @@ export const enum ExitStatus {
 
 export interface CliHost {
   readonly stderrIsTTY: boolean;
+  readonly resolvePath: (specifier: string, referrer?: string) => string;
   readonly readFile: (path: string) => string;
   readonly writeStdout: (text: string) => void;
   readonly writeStderr: (text: string) => void;
@@ -54,32 +60,53 @@ export function runCli(arguments_: readonly string[], host: CliHost): ExitStatus
 }
 
 function runFile(file: string, host: CliHost, color: boolean): ExitStatus {
+  let sourceName: string;
   let source: string;
   try {
-    source = host.readFile(file);
+    sourceName = host.resolvePath(file);
+    source = host.readFile(sourceName);
   } catch (error: unknown) {
     host.writeStderr(formatCliError(`Cannot read '${file}': ${describeError(error)}`, color));
     return ExitStatus.ProgramError;
   }
 
-  const print = nativeFunction(({ arguments: [value = null] }) => {
-    host.writeStdout(`${formatPrintValue(value)}\n`);
-    return null;
-  }, { name: "print", arity: 1 });
-  const result = interpret(source, { globals: { print } });
-  const sourceText = new SourceText(source);
-  const formatOptions = { color, file, source: sourceText };
+  const loadedSources = new Map<string, SourceText>([[sourceName, new SourceText(source)]]);
+  const fileModuleLoader: FileModuleLoader = {
+    load(specifier, referrer) {
+      try {
+        const name = host.resolvePath(specifier, referrer.name);
+        const text = host.readFile(name);
+        loadedSources.set(name, new SourceText(text));
+        return { ok: true, source: { name, text } };
+      } catch (error: unknown) {
+        return { ok: false, message: describeError(error) };
+      }
+    },
+  };
+  const environment = defineEnvironment({
+    print: hostFunction({
+      parameters: ["value"],
+      invoke: ({ arguments: [value = null] }) => {
+        host.writeStdout(`${formatPrintValue(value)}\n`);
+        return null;
+      },
+    }),
+  });
+  const compilation = environment.compileProgram(source, { sourceName, fileModuleLoader });
+  const sources = compilation.ok
+    ? compilation.program.analysis.sources
+    : compilation.sources ?? loadedSources;
+  const formatOptions = { color, fallbackSourceName: sourceName, sources };
 
-  if (result.analysis.diagnostics.length > 0) {
-    for (const diagnostic of result.analysis.diagnostics) {
+  if (!compilation.ok) {
+    for (const diagnostic of compilation.diagnostics) {
       host.writeStderr(formatDiagnostic(diagnostic, formatOptions));
     }
-  }
-  if (result.analysis.diagnostics.some((diagnostic) => diagnostic.category === "error")) {
     return ExitStatus.ProgramError;
   }
-  if (!result.evaluation.ok) {
-    host.writeStderr(formatDiagnostic(result.evaluation.diagnostic, formatOptions));
+  const evaluation = compilation.program.evaluate(environment.createActivation({}));
+  if (!evaluation.ok) {
+    host.writeStderr(formatDiagnostic(evaluation.diagnostic, formatOptions));
     return ExitStatus.ProgramError;
   }
   return ExitStatus.Success;

@@ -1,0 +1,12 @@
+module geometry {
+  export let unit = "px";
+  export fn area(width, height) = width * height;
+}
+
+import geometry.{area, unit};
+import {scale, dimensions as vectorDimensions} from "./vector.sumi";
+
+print(area(6, 7));
+print(unit);
+print(scale([3, 4], 2));
+print(vectorDimensions);

@@ -24,16 +24,32 @@ export function parse(text: string | SourceText): ParseResult {
   return parser.parseProgram();
 }
 
+export function parseFileModule(text: string | SourceText): ParseResult {
+  const lexResult = lex(text);
+  const parser = new Parser(lexResult.source, lexResult.tokens, lexResult.diagnostics);
+  return parser.parseFileModule();
+}
+
+export function parseExpression(text: string | SourceText): ParseResult {
+  const lexResult = lex(text);
+  const parser = new Parser(lexResult.source, lexResult.tokens, lexResult.diagnostics);
+  return parser.parseExpressionRoot();
+}
+
 type StructuralElement = CstNode | CstMissingToken | CstSkippedTokens;
 
 const enum ParsingContext {
-  ProgramStatements,
+  RootExpression,
+  ProgramItems,
+  FileModuleItems,
+  ModuleItems,
   BlockStatements,
   ArrayElements,
   DictionaryEntries,
   ClosureParameters,
   CallArguments,
   MatchArms,
+  ImportSelectors,
   GroupedExpression,
   ComputedDictionaryKey,
   ComputedSelector,
@@ -97,7 +113,7 @@ class Parser {
     const start = this.#position;
     const children: StructuralElement[] = [];
 
-    this.#parseStatementList(children, ParsingContext.ProgramStatements, false);
+    this.#parseProgramItemList(children);
 
     this.#consumeIf(SyntaxKind.EndOfFileToken);
     const cst = this.#node(CstKind.Program, start, children);
@@ -109,9 +125,50 @@ class Parser {
     };
   }
 
+  public parseFileModule(): ParseResult {
+    const start = this.#position;
+    const children: StructuralElement[] = [];
+
+    this.#parseModuleItemList(children, ParsingContext.FileModuleItems);
+
+    this.#consumeIf(SyntaxKind.EndOfFileToken);
+    const cst = this.#node(CstKind.FileModule, start, children);
+    return {
+      source: this.#source,
+      tokens: this.#tokens,
+      cst,
+      diagnostics: sortDiagnostics(this.#diagnostics),
+    };
+  }
+
+  public parseExpressionRoot(): ParseResult {
+    const start = this.#position;
+    const children: StructuralElement[] = [this.#withParsingContext(
+      ParsingContext.RootExpression,
+      () => this.#parseExpression(),
+    )];
+
+    if (this.#peekKind() !== SyntaxKind.EndOfFileToken) {
+      this.#reportPrimary("SF2004", "Expected the end of the expression.");
+      const skipped = this.#skipTokensWhile((token) => token.kind !== SyntaxKind.EndOfFileToken);
+      if (skipped !== undefined) {
+        children.push(skipped);
+      }
+    }
+
+    this.#consumeIf(SyntaxKind.EndOfFileToken);
+    const cst = this.#node(CstKind.ExpressionRoot, start, children);
+    return {
+      source: this.#source,
+      tokens: this.#tokens,
+      cst,
+      diagnostics: sortDiagnostics(this.#diagnostics),
+    };
+  }
+
   #parseStatementList(
     children: StructuralElement[],
-    context: ParsingContext.ProgramStatements | ParsingContext.BlockStatements,
+    context: ParsingContext.BlockStatements,
     allowResult: boolean,
   ): void {
     this.#withParsingContext(context, () => {
@@ -161,6 +218,198 @@ class Parser {
         }
       }
     });
+  }
+
+  #parseProgramItemList(children: StructuralElement[]): void {
+    this.#withParsingContext(ParsingContext.ProgramItems, () => {
+      while (this.#peekKind() !== SyntaxKind.EndOfFileToken) {
+        const start = this.#position;
+        if (this.#peekKind() === SyntaxKind.SemicolonToken) {
+          this.#consume();
+          children.push(this.#node(CstKind.EmptyStatement, start));
+        } else if (this.#peekKind() === SyntaxKind.ImportKeyword) {
+          children.push(this.#parseImportDeclaration());
+        } else if (this.#peekKind() === SyntaxKind.ModuleKeyword) {
+          children.push(this.#parseModuleDeclaration());
+        } else if (isStatementStart(this.#peekKind())) {
+          children.push(this.#parseRequiredStatement(false));
+        } else if (this.#recoverUnexpectedTokens(
+          ParsingContext.ProgramItems,
+          children,
+          "Expected a program item.",
+        ) === RecoveryAction.Abort) {
+          break;
+        }
+
+        this.#ensureListProgress(start, children, "Expected a program item.");
+      }
+    });
+  }
+
+  #parseModuleItemList(
+    children: StructuralElement[],
+    context: ParsingContext.ModuleItems | ParsingContext.FileModuleItems = ParsingContext.ModuleItems,
+  ): void {
+    this.#withParsingContext(context, () => {
+      while (!this.#isListEndForRecovery(context, this.#peekKind())) {
+        const start = this.#position;
+        if (this.#peekKind() === SyntaxKind.SemicolonToken) {
+          this.#consume();
+          children.push(this.#node(CstKind.EmptyStatement, start));
+        } else if (this.#peekKind() === SyntaxKind.ImportKeyword) {
+          children.push(this.#parseImportDeclaration());
+        } else if (this.#peekKind() === SyntaxKind.ExportKeyword) {
+          children.push(this.#parseExportDeclaration());
+        } else if (this.#peekKind() === SyntaxKind.ModuleKeyword) {
+          children.push(this.#parseModuleDeclaration());
+        } else if (
+          this.#peekKind() === SyntaxKind.LetKeyword
+          || this.#peekKind() === SyntaxKind.FnKeyword
+        ) {
+          children.push(this.#parseRequiredStatement(false));
+        } else if (this.#recoverUnexpectedTokens(
+          context,
+          children,
+          "Expected a module declaration.",
+        ) === RecoveryAction.Abort) {
+          break;
+        }
+
+        this.#ensureListProgress(start, children, "Expected a module declaration.");
+      }
+    });
+  }
+
+  #parseRequiredStatement(allowResult: boolean): CstNode {
+    if (this.#peekKind() === SyntaxKind.LetKeyword) {
+      return this.#parseLetStatement();
+    }
+    if (this.#peekKind() === SyntaxKind.FnKeyword) {
+      return this.#parseFnStatement();
+    }
+
+    const start = this.#position;
+    const expression = this.#parseExpression();
+    if (allowResult && this.#peekKind() !== SyntaxKind.SemicolonToken) {
+      return expression;
+    }
+    const children: StructuralElement[] = [expression];
+    this.#expectStatementTerminator(children);
+    return this.#node(CstKind.ExpressionStatement, start, children);
+  }
+
+  #ensureListProgress(
+    start: number,
+    children: StructuralElement[],
+    message: string,
+  ): void {
+    if (this.#position !== start) {
+      return;
+    }
+    this.#reportPrimary("SF2004", message);
+    children.push(this.#skipCurrentToken());
+  }
+
+  #parseImportDeclaration(): CstNode {
+    const start = this.#position;
+    const children: StructuralElement[] = [];
+    this.#consume();
+
+    if (this.#peekKind() === SyntaxKind.OpenBraceToken) {
+      children.push(this.#parseImportSelectorList());
+      this.#expect(SyntaxKind.FromKeyword, children);
+      this.#expect(SyntaxKind.StringLiteralToken, children);
+      this.#expectStatementTerminator(children);
+      return this.#node(CstKind.ImportDeclaration, start, children);
+    }
+
+    const path = this.#parseModulePath();
+    children.push(path);
+    if (this.#consumeIf(SyntaxKind.FromKeyword) !== undefined) {
+      this.#expect(SyntaxKind.StringLiteralToken, children);
+    } else if (this.#consumeIf(SyntaxKind.AsKeyword) !== undefined) {
+      this.#expect(SyntaxKind.IdentifierToken, children);
+    } else {
+      this.#expect(SyntaxKind.DotToken, children);
+      children.push(this.#parseImportSelectorList());
+    }
+    this.#expectStatementTerminator(children);
+    return this.#node(CstKind.ImportDeclaration, start, children);
+  }
+
+  #parseExportDeclaration(): CstNode {
+    const start = this.#position;
+    const children: StructuralElement[] = [];
+    this.#consume();
+    if (this.#peekKind() === SyntaxKind.LetKeyword) {
+      children.push(this.#parseLetStatement());
+    } else if (this.#peekKind() === SyntaxKind.FnKeyword) {
+      children.push(this.#parseFnStatement());
+    } else if (this.#peekKind() === SyntaxKind.ModuleKeyword) {
+      children.push(this.#parseModuleDeclaration());
+    } else {
+      children.push(this.#parseModulePath());
+      this.#expect(SyntaxKind.DotToken, children);
+      children.push(this.#parseImportSelectorList());
+      this.#expectStatementTerminator(children);
+    }
+    return this.#node(CstKind.ExportDeclaration, start, children);
+  }
+
+  #parseModuleDeclaration(): CstNode {
+    const start = this.#position;
+    const children: StructuralElement[] = [];
+    this.#consume();
+    this.#expect(SyntaxKind.IdentifierToken, children);
+    this.#expect(SyntaxKind.OpenBraceToken, children);
+    this.#parseModuleItemList(children);
+    this.#expectClosingDelimiter(SyntaxKind.CloseBraceToken, children);
+    return this.#node(CstKind.ModuleDeclaration, start, children);
+  }
+
+  #parseModulePath(): CstNode {
+    const start = this.#position;
+    const children: StructuralElement[] = [];
+    this.#expect(SyntaxKind.IdentifierToken, children);
+    while (
+      this.#peekKind() === SyntaxKind.DotToken
+      && this.#peekKindAt(1) === SyntaxKind.IdentifierToken
+    ) {
+      this.#consume();
+      this.#consume();
+    }
+    return this.#node(CstKind.ModulePath, start, children);
+  }
+
+  #parseImportSelectorList(): CstNode {
+    const start = this.#position;
+    const children: StructuralElement[] = [];
+    this.#expect(SyntaxKind.OpenBraceToken, children);
+    if (this.#peekKind() === SyntaxKind.CloseBraceToken) {
+      this.#reportPrimary("SF2004", "Expected at least one import selector.");
+    }
+    this.#parseSeparatedList(children, {
+      context: ParsingContext.ImportSelectors,
+      separator: SyntaxKind.CommaToken,
+      parseElement: () => this.#parseImportSelector(),
+      expectedElementMessage: "Expected an import selector.",
+      expectedSeparatorMessage: "Expected ',' between import selectors.",
+    });
+    this.#expectClosingDelimiter(SyntaxKind.CloseBraceToken, children);
+    return this.#node(CstKind.ImportSelectorList, start, children);
+  }
+
+  #parseImportSelector(): CstNode {
+    const start = this.#position;
+    const children: StructuralElement[] = [];
+    if (this.#consumeIf(SyntaxKind.AsteriskToken) !== undefined) {
+      return this.#node(CstKind.WildcardImportSelector, start);
+    }
+    this.#expect(SyntaxKind.IdentifierToken, children);
+    if (this.#consumeIf(SyntaxKind.AsKeyword) !== undefined) {
+      this.#expect(SyntaxKind.IdentifierToken, children);
+    }
+    return this.#node(CstKind.ImportSelector, start, children);
   }
 
   #parseLetStatement(): CstNode {
@@ -721,7 +970,11 @@ class Parser {
 
   #isListElement(context: ParsingContext, kind: SyntaxKind): boolean {
     switch (context) {
-      case ParsingContext.ProgramStatements:
+      case ParsingContext.ProgramItems:
+        return isProgramItemStart(kind);
+      case ParsingContext.FileModuleItems:
+      case ParsingContext.ModuleItems:
+        return isModuleItemStart(kind);
       case ParsingContext.BlockStatements:
         return isStatementStart(kind);
       case ParsingContext.ArrayElements:
@@ -733,6 +986,9 @@ class Parser {
         return isPatternStart(kind);
       case ParsingContext.MatchArms:
         return isPatternStart(kind);
+      case ParsingContext.ImportSelectors:
+        return kind === SyntaxKind.IdentifierToken || kind === SyntaxKind.AsteriskToken;
+      case ParsingContext.RootExpression:
       case ParsingContext.GroupedExpression:
       case ParsingContext.ComputedDictionaryKey:
       case ParsingContext.ComputedSelector:
@@ -748,8 +1004,12 @@ class Parser {
     }
 
     switch (context) {
-      case ParsingContext.ProgramStatements:
+      case ParsingContext.RootExpression:
+      case ParsingContext.ProgramItems:
+      case ParsingContext.FileModuleItems:
         return false;
+      case ParsingContext.ModuleItems:
+        return kind === SyntaxKind.CloseBraceToken;
       case ParsingContext.BlockStatements:
         return kind === SyntaxKind.CloseBraceToken;
       case ParsingContext.ArrayElements:
@@ -764,6 +1024,8 @@ class Parser {
       case ParsingContext.GroupedExpression:
         return kind === SyntaxKind.CloseParenToken;
       case ParsingContext.MatchArms:
+        return kind === SyntaxKind.CloseBraceToken;
+      case ParsingContext.ImportSelectors:
         return kind === SyntaxKind.CloseBraceToken;
       case ParsingContext.ComputedDictionaryKey:
       case ParsingContext.ComputedSelector:
@@ -792,12 +1054,16 @@ class Parser {
       case ParsingContext.DictionaryEntries:
       case ParsingContext.BlockStatements:
       case ParsingContext.MatchArms:
+      case ParsingContext.ModuleItems:
+      case ParsingContext.ImportSelectors:
         return SyntaxKind.CloseBraceToken;
       case ParsingContext.ClosureParameters:
       case ParsingContext.CallArguments:
       case ParsingContext.GroupedExpression:
         return SyntaxKind.CloseParenToken;
-      case ParsingContext.ProgramStatements:
+      case ParsingContext.ProgramItems:
+      case ParsingContext.FileModuleItems:
+      case ParsingContext.RootExpression:
       case ParsingContext.IfCondition:
       case ParsingContext.IfBranch:
         return undefined;
@@ -806,7 +1072,11 @@ class Parser {
 
   #separatorForContext(context: ParsingContext): SyntaxKind | undefined {
     switch (context) {
-      case ParsingContext.ProgramStatements:
+      case ParsingContext.RootExpression:
+        return SyntaxKind.SemicolonToken;
+      case ParsingContext.ProgramItems:
+      case ParsingContext.FileModuleItems:
+      case ParsingContext.ModuleItems:
       case ParsingContext.BlockStatements:
         return SyntaxKind.SemicolonToken;
       case ParsingContext.ArrayElements:
@@ -814,6 +1084,7 @@ class Parser {
       case ParsingContext.ClosureParameters:
       case ParsingContext.CallArguments:
       case ParsingContext.MatchArms:
+      case ParsingContext.ImportSelectors:
         return SyntaxKind.CommaToken;
       case ParsingContext.GroupedExpression:
       case ParsingContext.ComputedDictionaryKey:
@@ -849,7 +1120,11 @@ class Parser {
   #shouldDeferAdjacentExpressionToList(kind: SyntaxKind): boolean {
     const context = this.#parsingContexts.at(-1);
     switch (context) {
-      case ParsingContext.ProgramStatements:
+      case ParsingContext.ProgramItems:
+        return isProgramItemStart(kind);
+      case ParsingContext.FileModuleItems:
+      case ParsingContext.ModuleItems:
+        return isModuleItemStart(kind);
       case ParsingContext.BlockStatements:
         return isStatementStart(kind);
       case ParsingContext.ArrayElements:
@@ -859,7 +1134,10 @@ class Parser {
         return isDictionaryEntryStart(kind);
       case ParsingContext.MatchArms:
         return isPatternStart(kind);
+      case ParsingContext.ImportSelectors:
+        return kind === SyntaxKind.IdentifierToken || kind === SyntaxKind.AsteriskToken;
       case ParsingContext.ClosureParameters:
+      case ParsingContext.RootExpression:
       case ParsingContext.GroupedExpression:
       case ParsingContext.ComputedDictionaryKey:
       case ParsingContext.ComputedSelector:
@@ -958,6 +1236,10 @@ class Parser {
 
   #peekKindAfterCurrent(): SyntaxKind {
     return this.#tokens[this.#position + 1]?.kind ?? SyntaxKind.EndOfFileToken;
+  }
+
+  #peekKindAt(offset: number): SyntaxKind {
+    return this.#tokens[this.#position + offset]?.kind ?? SyntaxKind.EndOfFileToken;
   }
 
   #looksLikeMatchSelection(): boolean {
@@ -1354,6 +1636,20 @@ function isStatementStart(kind: SyntaxKind | undefined): boolean {
     || isExpressionStart(kind);
 }
 
+function isProgramItemStart(kind: SyntaxKind | undefined): boolean {
+  return kind === SyntaxKind.ImportKeyword
+    || kind === SyntaxKind.ModuleKeyword
+    || isStatementStart(kind);
+}
+
+function isModuleItemStart(kind: SyntaxKind | undefined): boolean {
+  return kind === SyntaxKind.ImportKeyword
+    || kind === SyntaxKind.ExportKeyword
+    || kind === SyntaxKind.ModuleKeyword
+    || kind === SyntaxKind.LetKeyword
+    || kind === SyntaxKind.FnKeyword;
+}
+
 function isDictionaryEntryStart(kind: SyntaxKind | undefined): boolean {
   return kind === SyntaxKind.IdentifierToken
     || kind === SyntaxKind.NumberLiteralToken
@@ -1368,7 +1664,10 @@ function isClosingDelimiter(kind: SyntaxKind | undefined): boolean {
 }
 
 function isKeywordRecoveryBoundary(kind: SyntaxKind): boolean {
-  return kind === SyntaxKind.ElseKeyword;
+  return kind === SyntaxKind.ElseKeyword
+    || kind === SyntaxKind.ImportKeyword
+    || kind === SyntaxKind.ExportKeyword
+    || kind === SyntaxKind.ModuleKeyword;
 }
 
 function closingDelimiterFor(kind: SyntaxKind | undefined): SyntaxKind | undefined {
@@ -1409,5 +1708,7 @@ const tokenDisplayText = new Map<SyntaxKind, string>([
   [SyntaxKind.ArrowToken, "'->'"],
   [SyntaxKind.EqualsToken, "'='"],
   [SyntaxKind.ElseKeyword, "'else'"],
+  [SyntaxKind.FromKeyword, "'from'"],
+  [SyntaxKind.DotToken, "'.'"],
   [SyntaxKind.IdentifierToken, "an identifier"],
 ]);

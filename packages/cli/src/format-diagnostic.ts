@@ -5,8 +5,8 @@ const ansiReset = "\u001b[0m";
 
 export interface DiagnosticFormatOptions {
   readonly color: boolean;
-  readonly file: string;
-  readonly source: SourceText;
+  readonly fallbackSourceName: string;
+  readonly sources: ReadonlyMap<string, SourceText>;
 }
 
 export function formatDiagnostic(
@@ -28,8 +28,10 @@ function formatPrimaryDiagnostic(
   diagnostic: Diagnostic,
   options: DiagnosticFormatOptions,
 ): string {
-  const position = options.source.positionAt(diagnostic.range.start);
-  return `${options.file}:${position.line + 1}:${position.column + 1} - `
+  const sourceName = diagnostic.sourceName ?? options.fallbackSourceName;
+  const source = options.sources.get(sourceName) ?? new SourceText("");
+  const position = source.positionAt(diagnostic.range.start);
+  return `${sourceName}:${position.line + 1}:${position.column + 1} - `
     + `${formatLabel(diagnostic.category, options.color)} ${diagnostic.code}: ${diagnostic.message}`;
 }
 
@@ -37,8 +39,10 @@ function formatRelatedDiagnostic(
   related: RelatedDiagnosticInformation,
   options: DiagnosticFormatOptions,
 ): string {
-  const position = options.source.positionAt(related.range.start);
-  return `${options.file}:${position.line + 1}:${position.column + 1} - note: ${related.message}`;
+  const sourceName = related.sourceName ?? options.fallbackSourceName;
+  const source = options.sources.get(sourceName) ?? new SourceText("");
+  const position = source.positionAt(related.range.start);
+  return `${sourceName}:${position.line + 1}:${position.column + 1} - note: ${related.message}`;
 }
 
 function formatLabel(label: string, color: boolean): string {

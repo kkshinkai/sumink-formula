@@ -14,12 +14,75 @@ export {
   type CstSkippedTokens,
 } from "./cst.js";
 export { diagnostic, sortDiagnostics } from "./diagnostic.js";
-export { evaluate, type EvaluateOptions, type EvaluationResult } from "./evaluator.js";
-export { analyze, interpret, type AnalysisResult, type InterpretationResult } from "./interpreter.js";
+export {
+  constantValue,
+  defineEnvironment,
+  externalValue,
+  hostFunction,
+  nativeModule,
+  type Activation,
+  type ActivationValues,
+  type Compilation,
+  type ConstantValueBinding,
+  type EnvironmentBinding,
+  type EnvironmentDefinition,
+  type ExternalValueBinding,
+  type HostFunctionBinding,
+  type NativeModuleBinding,
+  type PreparedEvaluationOptions,
+  type PreparedExpression,
+  type PreparedProgram,
+  type SumiEnvironment,
+} from "./environment.js";
+export {
+  evaluate,
+  evaluateExpression,
+  evaluateModule,
+  type EvaluateOptions,
+  type EvaluationResult,
+  type ModuleEvaluationResult,
+} from "./evaluator.js";
+export {
+  analyze,
+  analyzeExpression,
+  interpret,
+  interpretExpression,
+  type AnalysisResult,
+  type ExpressionAnalysisResult,
+  type ExpressionInterpretationResult,
+  type InterpretationResult,
+} from "./interpreter.js";
 export { lex, type LexResult } from "./lexer.js";
-export { lower, type LowerResult } from "./lower.js";
-export { parse, type ParseResult } from "./parser.js";
-export { resolve, type BindingId, type Resolution, type ResolvedReference } from "./resolver.js";
+export {
+  lower,
+  lowerExpression,
+  lowerFileModule,
+  type LowerFileModuleResult,
+  type LowerExpressionResult,
+  type LowerResult,
+} from "./lower.js";
+export { parse, parseExpression, parseFileModule, type ParseResult } from "./parser.js";
+export {
+  compileLinkedProgram,
+  type FileModuleLoader,
+  type FileModuleLoadResult,
+  type LinkedProgram,
+  type LinkedProgramAnalysis,
+  type LinkEnvironment,
+  type ProgramCompileOptions,
+  type SourceUnit,
+} from "./module-system.js";
+export {
+  resolve,
+  resolveExpression,
+  type BindingId,
+  type Resolution,
+  type ResolvedModuleBinding,
+  type ResolvedModuleMember,
+  type ExternalBindingResolution,
+  type ResolvedReference,
+  type ResolveOptions,
+} from "./resolver.js";
 export {
   arrayValue,
   dictionaryValue,
@@ -29,10 +92,12 @@ export {
   isFunctionValue,
   isRuntimeValue,
   nativeFunction,
+  runtimeValueFromJson,
   runtimeEquals,
   type ArrayValue,
   type DictionaryValue,
   type FunctionValue,
+  type JsonValue,
   type NativeFunctionContext,
   type NativeFunctionImplementation,
   type RuntimeDictionaryEntry,
@@ -60,11 +125,24 @@ export type {
   ErrorPattern,
   Expression,
   ExpressionStatement,
+  ExportDeclaration,
+  ExportedDeclaration,
   FieldSelectorExpression,
+  FileModule,
   FnStatement,
   GroupedExpression,
   IdentifierExpression,
   IdentifierPattern,
+  ImportClause,
+  ImportDeclaration,
+  ImportSelector,
+  MemberImportClause,
+  ModuleAliasImportClause,
+  ModuleDeclaration,
+  ModuleItem,
+  ModulePath,
+  ModulePathSegment,
+  NamedImportSelector,
   IfExpression,
   InfixOperator,
   InfixOperatorExpression,
@@ -80,6 +158,8 @@ export type {
   PrefixOperator,
   PrefixOperatorExpression,
   Program,
+  ProgramItem,
   Statement,
   WildcardPattern,
+  WildcardImportSelector,
 } from "./ast.js";

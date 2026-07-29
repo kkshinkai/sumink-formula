@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { CstKind, isCstNode, type CstElement, type CstNode } from "./cst.js";
 import { lex } from "./lexer.js";
-import { parse } from "./parser.js";
+import { parse, parseFileModule } from "./parser.js";
 import { SyntaxKind } from "./syntax-kind.js";
 import { tokenFullRange, type SyntaxToken } from "./token.js";
 
@@ -11,9 +11,25 @@ interface RecoveryFixture {
   readonly name: string;
   readonly source: string;
   readonly preservedKinds: readonly CstKind[];
+  readonly root?: "file-module";
 }
 
 const lexicalErrorFixtures: readonly RecoveryFixture[] = [
+  {
+    name: "module declarations",
+    source: "import local.{x as y, *}; export module nested { export let value = 1 @ 2; }",
+    preservedKinds: [
+      CstKind.FileModule,
+      CstKind.ImportDeclaration,
+      CstKind.ExportDeclaration,
+      CstKind.ModuleDeclaration,
+      CstKind.ModulePath,
+      CstKind.ImportSelectorList,
+      CstKind.ImportSelector,
+      CstKind.WildcardImportSelector,
+    ],
+    root: "file-module",
+  },
   {
     name: "statement coverage",
     source: "; let _ = 1; fn f(1, _) = @;",
@@ -113,6 +129,19 @@ const validGrammarFixtures = [
   "value match { 1 -> 'one', x -> x, _ -> nil, };",
 ] as const;
 
+const validFileModuleFixtures = [
+  `
+    import geometry.{area, unit as length, hidden as _, *};
+    import geometry as geo;
+    import {point, vector as direction, excluded as _, *} from "./vector.sumi";
+    import vector from "./vector.sumi";
+    export let origin = [0, 0];
+    export fn distance(a, b) = a - b;
+    export module shapes { export fn square(size) = size * size; }
+    export geometry.{area, unit as exportedUnit, *};
+  `,
+] as const;
+
 describe("parser recovery contract", () => {
   it("leaves a following declaration for statement-level terminator recovery", () => {
     const result = parse("let value = 1 let other = 2;");
@@ -135,8 +164,11 @@ describe("parser recovery contract", () => {
     for (const source of validGrammarFixtures) {
       descendantKinds(parse(source).cst).forEach((kind) => validKinds.add(kind));
     }
+    for (const source of validFileModuleFixtures) {
+      descendantKinds(parseFileModule(source).cst).forEach((kind) => validKinds.add(kind));
+    }
     for (const fixture of lexicalErrorFixtures) {
-      descendantKinds(parse(fixture.source).cst).forEach((kind) => malformedKinds.add(kind));
+      descendantKinds(parseFixture(fixture).cst).forEach((kind) => malformedKinds.add(kind));
     }
 
     const missingValidKinds: CstKind[] = [];
@@ -159,7 +191,7 @@ describe("parser recovery contract", () => {
 
   for (const fixture of lexicalErrorFixtures) {
     it(`owns one lexical error without cascading through ${fixture.name}`, () => {
-      const result = parse(fixture.source);
+      const result = parseFixture(fixture);
       const kinds = descendantKinds(result.cst);
 
       expect(result.diagnostics).toEqual([expect.objectContaining({ code: "SF1000", phase: "lex" })]);
@@ -247,6 +279,12 @@ describe("parser recovery contract", () => {
     );
   });
 });
+
+function parseFixture(fixture: RecoveryFixture) {
+  return fixture.root === "file-module"
+    ? parseFileModule(fixture.source)
+    : parse(fixture.source);
+}
 
 function replaceRange(source: string, start: number, end: number, replacement: string): string {
   return source.slice(0, start) + replacement + source.slice(end);

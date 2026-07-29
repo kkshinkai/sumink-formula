@@ -4,8 +4,13 @@ import type {
   ClosureExpression,
   DictionaryEntry,
   Expression,
+  ExportDeclaration,
+  FileModule,
   FnStatement,
   IdentifierExpression,
+  ImportClause,
+  ImportDeclaration,
+  ImportSelector,
   InfixOperator,
   InfixOperatorExpression,
   LetStatement,
@@ -13,9 +18,13 @@ import type {
   LiteralValue,
   MatchArm,
   MatchSelectionExpression,
+  ModuleDeclaration,
+  ModuleItem,
+  ModulePath,
   NodeId,
   Pattern,
   Program,
+  ProgramItem,
   Statement,
 } from "./ast.js";
 import { CstKind, type CstNode } from "./cst.js";
@@ -30,10 +39,36 @@ export interface LowerResult {
   readonly diagnostics: readonly Diagnostic[];
 }
 
+export interface LowerExpressionResult {
+  readonly expression: Expression;
+  readonly diagnostics: readonly Diagnostic[];
+}
+
+export interface LowerFileModuleResult {
+  readonly fileModule: FileModule;
+  readonly diagnostics: readonly Diagnostic[];
+}
+
 export function lower(parseResult: ParseResult): LowerResult {
   const lowerer = new Lowerer(parseResult);
   return {
     program: lowerer.lowerProgram(),
+    diagnostics: parseResult.diagnostics,
+  };
+}
+
+export function lowerExpression(parseResult: ParseResult): LowerExpressionResult {
+  const lowerer = new Lowerer(parseResult);
+  return {
+    expression: lowerer.lowerExpressionRoot(),
+    diagnostics: parseResult.diagnostics,
+  };
+}
+
+export function lowerFileModule(parseResult: ParseResult): LowerFileModuleResult {
+  const lowerer = new Lowerer(parseResult);
+  return {
+    fileModule: lowerer.lowerFileModule(),
     diagnostics: parseResult.diagnostics,
   };
 }
@@ -52,11 +87,33 @@ class Lowerer {
       kind: "Program",
       id: this.#id(),
       range: node.range,
-      statements: directNodes(node).flatMap((child) => {
-        const statement = this.#statement(child);
-        return statement === undefined ? [] : [statement];
+      items: directNodes(node).flatMap((child) => {
+        const item = this.#programItem(child);
+        return item === undefined ? [] : [item];
       }),
     };
+  }
+
+  public lowerFileModule(): FileModule {
+    const node = this.#parseResult.cst;
+    if (node.kind !== CstKind.FileModule) {
+      throw new TypeError("Expected a file-module CST.");
+    }
+    return {
+      kind: "FileModule",
+      id: this.#id(),
+      range: node.range,
+      items: this.#moduleItems(node),
+    };
+  }
+
+  public lowerExpressionRoot(): Expression {
+    const node = this.#parseResult.cst;
+    if (node.kind !== CstKind.ExpressionRoot) {
+      throw new TypeError("Expected an expression-root CST.");
+    }
+    const expression = directNodes(node).find(isExpressionCst);
+    return this.#expressionOrError(expression, node.range);
   }
 
   #statement(node: CstNode): Statement | undefined {
@@ -83,6 +140,153 @@ class Lowerer {
       default:
         return undefined;
     }
+  }
+
+  #programItem(node: CstNode): ProgramItem | undefined {
+    const statement = this.#statement(node);
+    if (statement !== undefined) {
+      return statement;
+    }
+    if (node.kind === CstKind.ImportDeclaration) {
+      return this.#importDeclaration(node);
+    }
+    if (node.kind === CstKind.ModuleDeclaration) {
+      return this.#moduleDeclaration(node);
+    }
+    return undefined;
+  }
+
+  #moduleItems(node: CstNode): ModuleItem[] {
+    const items: ModuleItem[] = [];
+    for (const child of directNodes(node)) {
+      const statement = this.#statement(child);
+      if (statement?.kind === "LetStatement" || statement?.kind === "FnStatement") {
+        items.push(statement);
+        continue;
+      }
+      switch (child.kind) {
+        case CstKind.ImportDeclaration:
+          items.push(this.#importDeclaration(child));
+          break;
+        case CstKind.ExportDeclaration:
+          items.push(this.#exportDeclaration(child));
+          break;
+        case CstKind.ModuleDeclaration:
+          items.push(this.#moduleDeclaration(child));
+          break;
+      }
+    }
+    return items;
+  }
+
+  #moduleDeclaration(node: CstNode): ModuleDeclaration {
+    const name = requiredDirectToken(node, SyntaxKind.IdentifierToken);
+    return {
+      kind: "ModuleDeclaration",
+      id: this.#id(),
+      range: node.range,
+      name: name.value ?? "",
+      nameRange: name.range,
+      items: this.#moduleItems(node),
+    };
+  }
+
+  #importDeclaration(node: CstNode): ImportDeclaration {
+    const modulePathNode = directNodes(node).find((child) => child.kind === CstKind.ModulePath);
+    const selectorList = directNodes(node).find((child) => child.kind === CstKind.ImportSelectorList);
+    const sourceToken = directTokens(node).find((token) => token.kind === SyntaxKind.StringLiteralToken);
+    const path = modulePathNode === undefined ? undefined : this.#modulePath(modulePathNode);
+    const clause: ImportClause = selectorList === undefined
+      ? {
+          kind: "ModuleAliasImportClause",
+          localName: sourceToken === undefined
+            ? requiredDirectToken(node, SyntaxKind.IdentifierToken).value ?? ""
+            : path?.segments[0]?.name ?? "",
+          localNameRange: sourceToken === undefined
+            ? requiredDirectToken(node, SyntaxKind.IdentifierToken).range
+            : path?.segments[0]?.range ?? node.range,
+        }
+      : { kind: "MemberImportClause", selectors: this.#importSelectors(selectorList) };
+    return {
+      kind: "ImportDeclaration",
+      id: this.#id(),
+      range: node.range,
+      ...(path === undefined ? {} : { modulePath: path }),
+      ...(sourceToken === undefined
+        ? {}
+        : { source: sourceToken.value ?? "", sourceRange: sourceToken.range }),
+      clause,
+    };
+  }
+
+  #exportDeclaration(node: CstNode): ExportDeclaration {
+    const declaration = directNodes(node).find((child) =>
+      child.kind === CstKind.LetStatement
+      || child.kind === CstKind.FnStatement
+      || child.kind === CstKind.ModuleDeclaration
+    );
+    if (declaration !== undefined) {
+      const lowered = declaration.kind === CstKind.ModuleDeclaration
+        ? this.#moduleDeclaration(declaration)
+        : declaration.kind === CstKind.FnStatement
+          ? this.#fnStatement(declaration)
+          : this.#statement(declaration);
+      return {
+        kind: "ExportDeclaration",
+        id: this.#id(),
+        range: node.range,
+        ...(lowered === undefined || lowered.kind === "ExpressionStatement"
+          ? {}
+          : { declaration: lowered }),
+      };
+    }
+    const pathNode = directNodes(node).find((child) => child.kind === CstKind.ModulePath);
+    const selectorList = directNodes(node).find((child) => child.kind === CstKind.ImportSelectorList);
+    return {
+      kind: "ExportDeclaration",
+      id: this.#id(),
+      range: node.range,
+      ...(pathNode === undefined ? {} : { modulePath: this.#modulePath(pathNode) }),
+      ...(selectorList === undefined ? {} : { selectors: this.#importSelectors(selectorList) }),
+    };
+  }
+
+  #modulePath(node: CstNode): ModulePath {
+    return {
+      kind: "ModulePath",
+      id: this.#id(),
+      range: node.range,
+      segments: directTokens(node)
+        .filter((token) => token.kind === SyntaxKind.IdentifierToken)
+        .map((token) => ({ name: token.value ?? "", range: token.range })),
+    };
+  }
+
+  #importSelectors(node: CstNode): ImportSelector[] {
+    return directNodes(node).flatMap((selector): ImportSelector[] => {
+      if (selector.kind === CstKind.WildcardImportSelector) {
+        return [{ kind: "WildcardImportSelector", id: this.#id(), range: selector.range }];
+      }
+      if (selector.kind !== CstKind.ImportSelector) {
+        return [];
+      }
+      const names = directTokens(selector)
+        .filter((token) => token.kind === SyntaxKind.IdentifierToken);
+      const imported = names[0] ?? requiredDirectToken(selector, SyntaxKind.IdentifierToken);
+      const local = names[1];
+      const excluded = local?.value === "_";
+      return [{
+        kind: "NamedImportSelector",
+        id: this.#id(),
+        range: selector.range,
+        importedName: imported.value ?? "",
+        importedNameRange: imported.range,
+        ...(local === undefined || excluded
+          ? {}
+          : { localName: local.value ?? "", localNameRange: local.range }),
+        excluded,
+      }];
+    });
   }
 
   #fnStatement(node: CstNode): FnStatement {
@@ -154,14 +358,17 @@ class Lowerer {
         };
       case CstKind.InfixOperatorExpression:
         return this.#infixOperator(node);
-      case CstKind.FieldSelectorExpression:
+      case CstKind.FieldSelectorExpression: {
+        const field = requiredDirectToken(node, SyntaxKind.IdentifierToken);
         return {
           kind: "FieldSelectorExpression",
           id: this.#id(),
           range: node.range,
           receiver: this.#requiredExpression(node, 0),
-          field: requiredDirectToken(node, SyntaxKind.IdentifierToken).value ?? "",
+          field: field.value ?? "",
+          fieldRange: field.range,
         };
+      }
       case CstKind.ComputedSelectorExpression:
         return {
           kind: "ComputedSelectorExpression",

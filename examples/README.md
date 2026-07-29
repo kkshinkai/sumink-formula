@@ -13,3 +13,5 @@ pnpm exec sumi examples/closures.sumi
 - [`tree-processing.sumi`](./tree-processing.sumi) recursively transforms nested Dictionary data.
 - [`dictionary-keys.sumi`](./dictionary-keys.sumi) uses arrays, dictionaries, Booleans, and functions as keys.
 - [`trailing-blocks.sumi`](./trailing-blocks.sumi) combines curried calls, braced arguments, blocks, dictionaries, and lambdas.
+- [`modules.sumi`](./modules.sumi) imports a nested Formula Module and the File
+  Module in [`vector.sumi`](./vector.sumi).

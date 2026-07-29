@@ -2,12 +2,25 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
 import { CstKind, type CstElement, type CstNode } from "./cst.js";
-import { lower } from "./lower.js";
-import { parse } from "./parser.js";
+import { lower, lowerExpression } from "./lower.js";
+import { parse, parseExpression } from "./parser.js";
 import { SyntaxKind } from "./syntax-kind.js";
 import { tokenFullRange, type SyntaxToken } from "./token.js";
 
 describe("parse", () => {
+  it("parses a standalone expression through a lossless expression root", () => {
+    const result = parseExpression("value + 1 // trailing");
+    const lowered = lowerExpression(result);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.cst.kind).toBe(CstKind.ExpressionRoot);
+    expect(lowered.expression).toMatchObject({
+      kind: "InfixOperatorExpression",
+      operator: "+",
+    });
+    expect(reconstruct(result.cst, result.source.toString())).toBe(result.source.toString());
+  });
+
   it("builds parenthesized and bare closures from the same closure node", () => {
     const result = parse("(item, _,) -> item.amount > 100; item -> item; (item -> item);");
 
@@ -30,7 +43,7 @@ describe("parse", () => {
     expect(empty.diagnostics).toEqual([]);
     expect(semicolons.diagnostics).toEqual([]);
     expect(descendantKinds(semicolons.cst).filter((kind) => kind === CstKind.EmptyStatement)).toHaveLength(6);
-    expect(lower(semicolons).program.statements).toEqual([]);
+    expect(lower(semicolons).program.items).toEqual([]);
   });
 
   it("builds let, fn, and expression statements", () => {
@@ -38,7 +51,7 @@ describe("parse", () => {
     const program = lower(result).program;
 
     expect(result.diagnostics).toEqual([]);
-    expect(program.statements).toMatchObject([
+    expect(program.items).toMatchObject([
       { kind: "LetStatement", pattern: { kind: "IdentifierPattern", name: "x" } },
       { kind: "FnStatement", name: "add", parameters: [{ name: "y" }] },
       { kind: "ExpressionStatement", expression: { kind: "CallExpression" } },
@@ -103,7 +116,7 @@ describe("parse", () => {
 
   it("preserves shorthand entries in the CST and lowers them to ordinary entries", () => {
     const result = parse("let x = 1; let y = 2; {x, y, explicit: x, [y]: x};");
-    const statement = lower(result).program.statements[2];
+    const statement = lower(result).program.items[2];
 
     expect(result.diagnostics).toEqual([]);
     expect(descendantKinds(result.cst).filter((kind) =>
@@ -190,8 +203,8 @@ describe("parse", () => {
   });
 
   it("lowers parenthesized and braced arguments to the same call shape", () => {
-    const parenthesized = lower(parse("f({});")).program.statements[0];
-    const braced = lower(parse("f {};")).program.statements[0];
+    const parenthesized = lower(parse("f({});")).program.items[0];
+    const braced = lower(parse("f {};")).program.items[0];
 
     expect(parenthesized).toMatchObject({
       kind: "ExpressionStatement",
@@ -253,7 +266,7 @@ describe("parse", () => {
 
   it("parses subject-first match tests and selections", () => {
     const result = parse("value match 1; value match { 1 -> 'one', n -> n, _ -> nil, };");
-    const selection = lower(result).program.statements[1];
+    const selection = lower(result).program.items[1];
 
     expect(result.diagnostics).toEqual([]);
     expect(descendantKinds(result.cst)).toEqual(expect.arrayContaining([
@@ -311,7 +324,7 @@ describe("parse", () => {
       expectedKind: SyntaxKind.CommaToken,
       range: { start: 3, end: 3 },
     }]);
-    expect(lower(result).program.statements[0]).toMatchObject({
+    expect(lower(result).program.items[0]).toMatchObject({
       kind: "ExpressionStatement",
       expression: { kind: "ArrayExpression", elements: [{ value: 1 }, { value: 2 }] },
     });

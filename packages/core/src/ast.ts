@@ -12,7 +12,12 @@ interface AstNodeBase {
 
 export interface Program extends AstNodeBase {
   readonly kind: "Program";
-  readonly statements: readonly Statement[];
+  readonly items: readonly ProgramItem[];
+}
+
+export interface FileModule extends AstNodeBase {
+  readonly kind: "FileModule";
+  readonly items: readonly ModuleItem[];
 }
 
 export interface LetStatement extends AstNodeBase {
@@ -35,6 +40,75 @@ export interface ExpressionStatement extends AstNodeBase {
 }
 
 export type Statement = LetStatement | FnStatement | ExpressionStatement;
+
+export interface ModulePathSegment {
+  readonly name: string;
+  readonly range: TextRange;
+}
+
+export interface ModulePath extends AstNodeBase {
+  readonly kind: "ModulePath";
+  readonly segments: readonly ModulePathSegment[];
+}
+
+export interface NamedImportSelector extends AstNodeBase {
+  readonly kind: "NamedImportSelector";
+  readonly importedName: string;
+  readonly importedNameRange: TextRange;
+  readonly localName?: string;
+  readonly localNameRange?: TextRange;
+  readonly excluded: boolean;
+}
+
+export interface WildcardImportSelector extends AstNodeBase {
+  readonly kind: "WildcardImportSelector";
+}
+
+export type ImportSelector = NamedImportSelector | WildcardImportSelector;
+
+export interface MemberImportClause {
+  readonly kind: "MemberImportClause";
+  readonly selectors: readonly ImportSelector[];
+}
+
+export interface ModuleAliasImportClause {
+  readonly kind: "ModuleAliasImportClause";
+  readonly localName: string;
+  readonly localNameRange: TextRange;
+}
+
+export type ImportClause = MemberImportClause | ModuleAliasImportClause;
+
+export interface ImportDeclaration extends AstNodeBase {
+  readonly kind: "ImportDeclaration";
+  readonly modulePath?: ModulePath;
+  readonly source?: string;
+  readonly sourceRange?: TextRange;
+  readonly clause: ImportClause;
+}
+
+export interface ModuleDeclaration extends AstNodeBase {
+  readonly kind: "ModuleDeclaration";
+  readonly name: string;
+  readonly nameRange: TextRange;
+  readonly items: readonly ModuleItem[];
+}
+
+export type ExportedDeclaration = LetStatement | FnStatement | ModuleDeclaration;
+
+export interface ExportDeclaration extends AstNodeBase {
+  readonly kind: "ExportDeclaration";
+  readonly declaration?: ExportedDeclaration;
+  readonly modulePath?: ModulePath;
+  readonly selectors?: readonly ImportSelector[];
+}
+
+export type ProgramItem = Statement | ImportDeclaration | ModuleDeclaration;
+export type ModuleItem = LetStatement
+  | FnStatement
+  | ImportDeclaration
+  | ExportDeclaration
+  | ModuleDeclaration;
 
 export interface ErrorExpression extends AstNodeBase {
   readonly kind: "ErrorExpression";
@@ -117,6 +191,7 @@ export interface FieldSelectorExpression extends AstNodeBase {
   readonly kind: "FieldSelectorExpression";
   readonly receiver: Expression;
   readonly field: string;
+  readonly fieldRange: TextRange;
 }
 
 export interface ComputedSelectorExpression extends AstNodeBase {

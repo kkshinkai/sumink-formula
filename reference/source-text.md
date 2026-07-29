@@ -1,6 +1,6 @@
 # Source text
 
-A source file is a sequence of Unicode scalar values. An unpaired UTF-16
+A source text is a sequence of Unicode scalar values. An unpaired UTF-16
 surrogate is not a Unicode scalar value and is an error wherever it occurs in
 the input.
 

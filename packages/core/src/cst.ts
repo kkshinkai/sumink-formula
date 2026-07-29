@@ -3,12 +3,22 @@ import type { TextRange } from "./text.js";
 import type { SyntaxToken } from "./token.js";
 
 export const enum CstKind {
+  ExpressionRoot,
   Program,
+  FileModule,
 
   EmptyStatement,
   LetStatement,
   FnStatement,
   ExpressionStatement,
+
+  ImportDeclaration,
+  ExportDeclaration,
+  ModuleDeclaration,
+  ModulePath,
+  ImportSelectorList,
+  ImportSelector,
+  WildcardImportSelector,
 
   ErrorExpression,
   LiteralExpression,

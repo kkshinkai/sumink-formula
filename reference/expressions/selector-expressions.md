@@ -21,3 +21,8 @@ kind. A missing dictionary key has the value `nil`.
 
 Applying a selector to a value of the wrong kind, or using a selector of the
 wrong kind for its receiver, is an error.
+
+The same dotted source form qualifies a statically known Module alias or nested
+Module. In that case it resolves an exported member and does not evaluate a
+Dictionary selector. Modules and their qualification rules are specified in
+[Modules](../modules.md).
