@@ -33,6 +33,6 @@ pnpm exec sumi examples/hello.sumi
 
 The first CLI executes every statement in the entry file and resolves relative
 File Module specifiers from the referring file. Successful Program execution
-has the value `nil`, which the CLI does not print. Programs can write to standard
+has the value `null`, which the CLI does not print. Programs can write to standard
 output through the CLI-provided `print(value)` binding. No editor, LSP, or VS
 Code package is part of this version.

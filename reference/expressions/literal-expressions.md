@@ -2,10 +2,10 @@
 
 ```text
 LiteralExpression = Literal
-Literal = STRING | NUMBER | "nil" | "true" | "false"
+Literal = STRING | NUMBER | "null" | "true" | "false"
 ```
 
-`nil` denotes the nil value. `true` and `false` denote the two Boolean values.
+`null` denotes the null value. `true` and `false` denote the two Boolean values.
 
 ```text
 NUMBER = Integer Fraction? Exponent?

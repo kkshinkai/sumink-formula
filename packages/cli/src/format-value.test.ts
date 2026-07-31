@@ -10,7 +10,7 @@ import { formatPrintValue } from "./format-value.js";
 
 describe("formatPrintValue", () => {
   it.each([
-    [null, "nil"],
+    [null, "null"],
     [true, "true"],
     [false, "false"],
     [42, "42"],
@@ -29,7 +29,7 @@ describe("formatPrintValue", () => {
     ]);
 
     expect(formatPrintValue(value)).toBe(
-      "{\"message\": \"hello\\nworld\", \"items\": [1, true, nil, \"text\"], "
+      "{\"message\": \"hello\\nworld\", \"items\": [1, true, null, \"text\"], "
       + "[[\"computed\"]]: {\"nested\": -0}}",
     );
   });

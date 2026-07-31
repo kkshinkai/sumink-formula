@@ -34,10 +34,10 @@ describe("built sumi process", () => {
     ],
     [
       "dictionary-keys.sumi",
-      "array key\ndictionary key\nboolean key\nnil\n"
-      + "{[[1, {\"name\": \"Ada\"}]]: \"new\", \"middle\": 0}\nsame closure\nnil\n",
+      "array key\ndictionary key\nboolean key\nnull\n"
+      + "{[[1, {\"name\": \"Ada\"}]]: \"new\", \"middle\": 0}\nsame closure\nnull\n",
     ],
-    ["trailing-blocks.sumi", "42\nyes\nAda\nnil\n{}\n"],
+    ["trailing-blocks.sumi", "42\nyes\nAda\nnull\n{}\n"],
     ["modules.sumi", "42\npx\n[6, 8]\n2\n"],
   ])("runs the repository example %s", (name, expectedOutput) => {
     const result = runNodeCli([join(workspaceRoot, "examples", name)]);

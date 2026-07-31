@@ -74,13 +74,13 @@ describe("runCli", () => {
     expect(host.stdout).toBe("[1, {\"name\": \"Ada\"}]\n<function/1>\n");
   });
 
-  it("makes print a strict one-argument function that returns nil", () => {
+  it("makes print a strict one-argument function that returns null", () => {
     const host = new FakeHost({
       "return.sumi": "print(print('inner'));",
     });
 
     expect(runCli(["return.sumi"], host)).toBe(ExitStatus.Success);
-    expect(host.stdout).toBe("inner\nnil\n");
+    expect(host.stdout).toBe("inner\nnull\n");
 
     const arityHost = new FakeHost({ "arity.sumi": "print();" });
     expect(runCli(["arity.sumi"], arityHost)).toBe(ExitStatus.ProgramError);

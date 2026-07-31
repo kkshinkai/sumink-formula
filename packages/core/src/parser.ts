@@ -548,7 +548,7 @@ class Parser {
     switch (this.#peekKind()) {
       case SyntaxKind.NumberLiteralToken:
       case SyntaxKind.StringLiteralToken:
-      case SyntaxKind.NilKeyword:
+      case SyntaxKind.NullKeyword:
       case SyntaxKind.TrueKeyword:
       case SyntaxKind.FalseKeyword:
         this.#consume();
@@ -864,7 +864,7 @@ class Parser {
     switch (kind) {
       case SyntaxKind.NumberLiteralToken:
       case SyntaxKind.StringLiteralToken:
-      case SyntaxKind.NilKeyword:
+      case SyntaxKind.NullKeyword:
       case SyntaxKind.TrueKeyword:
       case SyntaxKind.FalseKeyword:
         this.#consume();
@@ -1643,7 +1643,7 @@ function isPatternStart(kind: SyntaxKind | undefined): boolean {
   return kind === SyntaxKind.IdentifierToken
     || kind === SyntaxKind.NumberLiteralToken
     || kind === SyntaxKind.StringLiteralToken
-    || kind === SyntaxKind.NilKeyword
+    || kind === SyntaxKind.NullKeyword
     || kind === SyntaxKind.TrueKeyword
     || kind === SyntaxKind.FalseKeyword;
 }
@@ -1651,7 +1651,7 @@ function isPatternStart(kind: SyntaxKind | undefined): boolean {
 function isExpressionStart(kind: SyntaxKind | undefined): boolean {
   return kind === SyntaxKind.NumberLiteralToken
     || kind === SyntaxKind.StringLiteralToken
-    || kind === SyntaxKind.NilKeyword
+    || kind === SyntaxKind.NullKeyword
     || kind === SyntaxKind.TrueKeyword
     || kind === SyntaxKind.FalseKeyword
     || kind === SyntaxKind.IdentifierToken

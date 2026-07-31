@@ -16,7 +16,7 @@ The following spellings are reserved and cannot be identifiers:
 ```text
 if      else    let     fn
 match   import  export  from    as      module
-nil     true    false
+null    true    false
 not     and     or
 ```
 

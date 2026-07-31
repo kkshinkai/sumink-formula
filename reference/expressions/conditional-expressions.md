@@ -7,7 +7,7 @@ IfExpression =
 
 The condition must evaluate to a Boolean. When it is `true`, the consequent is
 evaluated and supplies the result. When it is `false`, the alternative is
-evaluated and supplies the result if present; otherwise the result is `nil`.
+evaluated and supplies the result if present; otherwise the result is `null`.
 The unselected expression is not evaluated.
 
 An `else` belongs to the nearest preceding `if` without an alternative:

@@ -116,7 +116,7 @@ const lexicalErrorFixtures: readonly RecoveryFixture[] = [
 
 const validGrammarFixtures = [
   ";;;;;;",
-  "nil; true; false; 1; 'text';",
+  "null; true; false; 1; 'text';",
   "1 + 2 * 3 == 7 and not false;",
   "values map transform;",
   "[1, 2, 3,];",
@@ -124,14 +124,14 @@ const validGrammarFixtures = [
   "f(1, 2,); f { x -> x };",
   "(1 + 2);",
   "(x, y,) -> x + y; x -> x;",
-  "(_) -> nil;",
+  "(_) -> null;",
   "{;}; {1}; {1;};",
   "if (true) 1 else if (false) 2 else 3;",
   "let x = 1; let y = z -> z; y(x);",
   "fn even(n) = odd(n - 1); fn odd(n) = even(n - 1); even(4);",
   "value.field[key];",
   "value match 1;",
-  "value match { 1 -> 'one', x -> x, _ -> nil, };",
+  "value match { 1 -> 'one', x -> x, _ -> null, };",
 ] as const;
 
 const validFileModuleFixtures = [
@@ -268,7 +268,7 @@ describe("parser recovery contract", () => {
         const sources = [
           `if (true @ false) 1 else 2; ${suffix}`,
           `let x = 1 @ 2; ${suffix}`,
-          `value match { 0 -> 0 @ 1, 1 -> 1, _ -> nil }; ${suffix}`,
+          `value match { 0 -> 0 @ 1, 1 -> 1, _ -> null }; ${suffix}`,
           `[1 @ 2, ${Array.from({ length: size }, () => "3").join(", ")}];`,
           `{a: 1 @ 2, b: 3}; ${suffix}`,
           `{ let local = 1 @ 2; local }; ${suffix}`,

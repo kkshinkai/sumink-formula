@@ -13,7 +13,7 @@ export function formatPrintValue(value: RuntimeValue): string {
 
 function formatNestedValue(value: RuntimeValue): string {
   if (value === null) {
-    return "nil";
+    return "null";
   }
   if (typeof value === "boolean") {
     return String(value);

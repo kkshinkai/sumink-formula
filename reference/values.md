@@ -3,7 +3,7 @@
 The runtime values are:
 
 ```text
-nil
+null
 Boolean
 Number
 String

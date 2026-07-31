@@ -22,7 +22,7 @@ import { tokenFullRange, type SyntaxToken } from "./token.js";
 describe("grammar conformance", () => {
   it.each([
     ["empty statements", ";;;;;;"],
-    ["literal expressions", "nil; true; false; 0; 42; 3.14; 1e6; 1E-6; 'text'; \"text\";"],
+    ["literal expressions", "null; true; false; 0; 42; 3.14; 1e6; 1E-6; 'text'; \"text\";"],
     ["array expressions", "[]; [1]; [1, 2, 3,];"],
     ["dictionary expressions", "{}; {name: 'Ada'}; {name,}; {name, value}; {name, value: 1, [key]: 2}; {'name': 1, 2: 'two', [key]: 2,};"],
     ["ordinary calls", "function(); function(1); function(1, 2,);"],
@@ -32,7 +32,7 @@ describe("grammar conformance", () => {
     ],
     ["infix calls", "source transform closure map mapper;"],
     ["grouped expressions", "(1 + 2) * 3;"],
-    ["closures", "() -> nil; value -> value; (value) -> value; (1, _, name,) -> name;"],
+    ["closures", "() -> null; value -> value; (value) -> value; (1, _, name,) -> name;"],
     ["blocks", "{;}; {;;;;}; {1}; {1;}; {let x = 1; x};"],
     ["conditionals", "if (a) b; if (a) b else if (c) d else e;"],
     ["operators", "not false or -1 + 2 * 3 <= 8 and 4 != 5;"],
@@ -40,7 +40,7 @@ describe("grammar conformance", () => {
     ["let statements", "let first = 1; let second = () -> first; second();"],
     ["fn statements", "fn first(x) = second(x); fn second(x) = x; first(1);"],
     ["match tests", "value match 1; value match _;"],
-    ["match selections", "value match { 0 -> 'zero', x -> x, _ -> nil, };"],
+    ["match selections", "value match { 0 -> 'zero', x -> x, _ -> null, };"],
     ["comments", "// line\n1; /* outer /* nested */ outer */ 2;"],
     ["modules", "module values { export let answer = 42; } import values.{answer}; answer;"],
   ])("accepts every approved %s form", (_description, source) => {

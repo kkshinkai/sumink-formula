@@ -265,7 +265,7 @@ describe("parse", () => {
   });
 
   it("parses subject-first match tests and selections", () => {
-    const result = parse("value match 1; value match { 1 -> 'one', n -> n, _ -> nil, };");
+    const result = parse("value match 1; value match { 1 -> 'one', n -> n, _ -> null, };");
     const selection = lower(result).program.items[1];
 
     expect(result.diagnostics).toEqual([]);

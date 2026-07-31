@@ -394,7 +394,7 @@ describe("formula modules", () => {
       ["module m {} import m.{missing};", "SF3103", "no export named 'missing'"],
       ["let value = 1; import value.{member};", "SF3104", "is a value, not a module"],
       ["module m {} let value = m;", "SF3001", "cannot be used as a runtime value"],
-      ["module m {} fn m() = nil;", "SF3106", "Duplicate declaration 'm'"],
+      ["module m {} fn m() = null;", "SF3106", "Duplicate declaration 'm'"],
       ["module m { export let _ = 1; }", "SF3106", "must bind an identifier"],
     ] as const;
 

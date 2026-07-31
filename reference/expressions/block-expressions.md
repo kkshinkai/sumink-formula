@@ -10,7 +10,7 @@ BlockBody = Statement* BlockResult?
 
 A block creates a lexical scope and executes its statements in source order.
 If it ends with a Block result, that result supplies the value of the block.
-Otherwise its value is `nil`.
+Otherwise its value is `null`.
 
 After any preceding Statements have been parsed, a `ClosureHead` starts a
 `BlockResultClosure`, not an ordinary `ClosureExpression` or Expression
@@ -30,11 +30,11 @@ to the enclosing Block; statements after the arrow belong to the closure body:
 
 The value of this Block is a closure. Calling the closure evaluates its body
 and returns `adjusted * adjusted`. The closure body returns its final result
-when it has one and otherwise returns `nil`, using the same Statement and
+when it has one and otherwise returns `null`, using the same Statement and
 result rules as a Block.
 
 The closure body may be empty. `{ value -> }` creates a closure that returns
-`nil`.
+`null`.
 
 A semicolon inside a Block-result closure belongs to the closure body:
 
@@ -67,14 +67,14 @@ therefore contains at least one empty statement:
 {;; x}
 ```
 
-The first two expressions have the value `nil`. The third and fifth have the
-value of `x`. The fourth has the value `nil`.
+The first two expressions have the value `null`. The third and fifth have the
+value of `x`. The fourth has the value `null`.
 
 A comma after a bare identifier selects Dictionary shorthand instead:
 
 ```sumi
 {x}      // Block whose value is x
-{x;}     // Block whose value is nil
+{x;}     // Block whose value is null
 {x,}     // Dictionary equivalent to {x: x}
 {x, y}   // Dictionary equivalent to {x: x, y: y}
 ```

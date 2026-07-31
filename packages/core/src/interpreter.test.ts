@@ -15,7 +15,11 @@ import {
 } from "./runtime-value.js";
 
 describe("statements and lexical closures", () => {
-  it("evaluates programs for effects and returns nil", () => {
+  it("evaluates the null literal", () => {
+    expectExpression("null", null);
+  });
+
+  it("evaluates programs for effects and returns null", () => {
     const events: RuntimeValue[] = [];
     const tap = nativeFunction(({ arguments: [value = null] }) => {
       events.push(value);
@@ -27,6 +31,20 @@ describe("statements and lexical closures", () => {
     expect(result.analysis.diagnostics).toEqual([]);
     expect(result.evaluation).toMatchObject({ ok: true, value: null });
     expect(events).toEqual([1, 2]);
+  });
+
+  it("treats the former nil spelling as an ordinary unresolved identifier", () => {
+    const result = interpret("nil;");
+
+    expect(result.analysis.diagnostics).toEqual([]);
+    expect([...result.analysis.resolution.dependencies]).toEqual(["nil"]);
+    expect(result.evaluation).toMatchObject({
+      ok: false,
+      diagnostic: {
+        code: "SF4003",
+        message: "No value was provided for external binding 'nil'.",
+      },
+    });
   });
 
   it("treats nested comments as trivia at every expression boundary", () => {
@@ -137,7 +155,7 @@ describe("statements and lexical closures", () => {
 
   it("diagnoses duplicate let and fn bindings in one scope", () => {
     const duplicateLet = analyze("let x = 1; let x = 2;");
-    const mixed = analyze("fn x() = nil; let x = 1;");
+    const mixed = analyze("fn x() = null; let x = 1;");
 
     for (const analysis of [duplicateLet, mixed]) {
       expect(analysis.resolution.diagnostics).toHaveLength(1);
@@ -188,7 +206,7 @@ describe("blocks, lambdas, and calls", () => {
     expectExpression("{ fn curry(x) = y -> x + y; curry { 1 } { 2 } }", 3);
   });
 
-  it("uses nil for if without else and associates else with the nearest if", () => {
+  it("uses null for if without else and associates else with the nearest if", () => {
     expectExpression("if (false) 1", null);
     expectExpression("if (true) if (false) 1 else 2", 2);
     expectExpression("if (false) if (true) 1 else 2 else 3", 3);
@@ -196,8 +214,12 @@ describe("blocks, lambdas, and calls", () => {
 });
 
 describe("match expressions", () => {
+  it("matches the null literal pattern", () => {
+    expectExpression("null match { null -> 'null', _ -> 'other' }", "null");
+  });
+
   it("selects the first accepting arm and exposes only that arm's bindings", () => {
-    expectExpression("2 match { 0 -> 'zero', value -> value + 1, _ -> nil, }", 3);
+    expectExpression("2 match { 0 -> 'zero', value -> value + 1, _ -> null, }", 3);
     expectExpression("'other' match { 'known' -> 1, _ -> 2 }", 2);
 
     const analysis = analyze("2 match { value -> value }; value;");

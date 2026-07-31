@@ -620,7 +620,7 @@ function literalValue(node: CstNode): LiteralValue {
   const token = directTokens(node).find((candidate) =>
     candidate.kind === SyntaxKind.NumberLiteralToken
     || candidate.kind === SyntaxKind.StringLiteralToken
-    || candidate.kind === SyntaxKind.NilKeyword
+    || candidate.kind === SyntaxKind.NullKeyword
     || candidate.kind === SyntaxKind.TrueKeyword
     || candidate.kind === SyntaxKind.FalseKeyword
   );

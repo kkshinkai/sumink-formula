@@ -14,7 +14,7 @@ ModuleItem = EmptyStatement
 ```
 
 A Program is an executable root. It may be empty. Its statements are executed
-in source order. Successful execution has the value `nil`; an expression
+in source order. Successful execution has the value `null`; an expression
 statement does not make its value the value of the Program.
 
 A File Module is a declaration-only root loaded by a File Module import. An

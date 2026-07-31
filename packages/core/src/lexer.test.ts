@@ -12,7 +12,7 @@ import {
 describe("lex", () => {
   it("recognizes every first-version keyword and punctuation token", () => {
     const result = lex(
-      "if else let fn match nil true false not and or "
+      "if else let fn match null true false not and or "
       + "()[]{} ,;:. -> = == != < <= > >= + - * / %",
     );
 
@@ -24,7 +24,7 @@ describe("lex", () => {
         SyntaxKind.LetKeyword,
         SyntaxKind.FnKeyword,
         SyntaxKind.MatchKeyword,
-        SyntaxKind.NilKeyword,
+        SyntaxKind.NullKeyword,
         SyntaxKind.TrueKeyword,
         SyntaxKind.FalseKeyword,
         SyntaxKind.NotKeyword,
@@ -205,15 +205,15 @@ describe("lex", () => {
 
   it("handles deeply nested block comments iteratively", () => {
     const depth = 2_000;
-    const source = "/*".repeat(depth) + "inside" + "*/".repeat(depth) + "nil;";
+    const source = "/*".repeat(depth) + "inside" + "*/".repeat(depth) + "null;";
     const result = lex(source);
 
     expect(result.diagnostics).toEqual([]);
-    expect(result.tokens[0]?.kind).toBe(SyntaxKind.NilKeyword);
+    expect(result.tokens[0]?.kind).toBe(SyntaxKind.NullKeyword);
     expect(result.tokens[0]?.leadingTrivia).toMatchObject([{
       kind: TriviaKind.BlockComment,
       flags: TriviaFlags.None,
-      range: { start: 0, end: source.length - 4 },
+      range: { start: 0, end: source.length - "null;".length },
     }]);
     expect(reconstruct(result)).toBe(source);
   });

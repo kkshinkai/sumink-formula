@@ -114,7 +114,7 @@ const result = compilation.program.evaluate(activation);
 
 `compileExpression` accepts one standalone expression and returns its value.
 `compileProgram` accepts the executable Program root used by entry `.sumi`
-files, links nested, Native, and loaded File Modules, and returns `nil` after
+files, links nested, Native, and loaded File Modules, and returns `null` after
 execution. Both produce reusable prepared units whose
 `freeNames` list includes every host binding they mention. `dependencies`
 contains only names declared with `externalValue`; constants and host functions

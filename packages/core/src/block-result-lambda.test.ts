@@ -211,7 +211,7 @@ describe("block-result lambdas", () => {
     expect(events).toEqual([3]);
   });
 
-  it("allows a block-result lambda with an empty nil-returning body", () => {
+  it("allows a block-result lambda with an empty null-returning body", () => {
     const source = "{ x -> }";
     const parsed = parseExpression(source);
     const expression = lowerExpression(parsed).expression;
