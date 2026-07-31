@@ -29,14 +29,35 @@ f {value,}  // passes {value: value}
 ```
 
 Postfix forms may continue after a braced argument, including another braced
-argument. The source below has no special trailing-lambda construct:
+argument. When a closure head occurs in the result position of a braced Block,
+its body consumes the remainder of that Block through the matching `}`:
 
 ```sumi
-f { x -> x + 1 }
+map(values) {
+  value ->
+  let normalized = normalize(value);
+  normalized + 1
+}
 ```
 
-The argument is a block whose result is the ordinary closure expression
-`x -> x + 1`.
+This call has one braced argument. The argument is the closure produced as the
+Block result. Its body contains both the `let` statement and the final
+expression. Neither is evaluated before `map` invokes the closure.
+
+The rule is unchanged when calls are chained:
+
+```sumi
+pipeline(source) {
+  value ->
+  let first = decode(value);
+  validate(first)
+} {
+  value -> encode(value)
+}
+```
+
+Each pair of braces is one argument to the call immediately to its left. Each
+closure body ends at the matching brace that contains its closure head.
 
 A named infix call has exactly the meaning of an ordinary two-argument call:
 

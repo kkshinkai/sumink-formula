@@ -65,6 +65,11 @@ const lexicalErrorFixtures: readonly RecoveryFixture[] = [
   { name: "call argument", source: "f(1 @ 2, 3);", preservedKinds: [CstKind.CallExpression] },
   { name: "grouped expression", source: "(1 @ 2);", preservedKinds: [CstKind.GroupedExpression] },
   { name: "closure body", source: "x -> x @ 1;", preservedKinds: [CstKind.ClosureExpression] },
+  {
+    name: "block-result closure body",
+    source: "{ x -> x @ 1; x + 1 };",
+    preservedKinds: [CstKind.ClosureExpression, CstKind.ClosureBlockBody],
+  },
   { name: "block expression", source: "{ 1 @ 2; 3 };", preservedKinds: [CstKind.BlockExpression] },
   { name: "if condition", source: "if (true @ false) 1 else 0;", preservedKinds: [CstKind.IfExpression] },
   { name: "if branch", source: "if (true) @ 1 else 0;", preservedKinds: [CstKind.IfExpression] },

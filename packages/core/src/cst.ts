@@ -42,6 +42,7 @@ export const enum CstKind {
   ShorthandDictionaryEntry,
   ComputedDictionaryKey,
   ClosureParameter,
+  ClosureBlockBody,
   MatchArm,
 
   LiteralPattern,

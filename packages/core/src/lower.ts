@@ -490,7 +490,10 @@ class Lowerer {
   }
 
   #closure(node: CstNode): ClosureExpression {
-    const body = directNodes(node).findLast(isExpressionCst);
+    const blockBody = directNodes(node).find((child) => child.kind === CstKind.ClosureBlockBody);
+    const body = blockBody === undefined
+      ? this.#expressionOrError(directNodes(node).findLast(isExpressionCst), node.range)
+      : this.#block(blockBody);
     return {
       kind: "ClosureExpression",
       id: this.#id(),
@@ -498,7 +501,7 @@ class Lowerer {
       parameters: directNodes(node)
         .filter((child) => child.kind === CstKind.ClosureParameter)
         .map((parameter) => this.#requiredPattern(parameter, 0)),
-      body: this.#expressionOrError(body, node.range),
+      body,
     };
   }
 

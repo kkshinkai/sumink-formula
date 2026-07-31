@@ -197,7 +197,9 @@ class Parser {
         } else if (this.#peekKind() === SyntaxKind.FnKeyword) {
           children.push(this.#parseFnStatement());
         } else {
-          const expression = this.#parseExpression();
+          const expression = allowResult && this.#looksLikeClosureStart()
+            ? this.#parseBlockResultClosureExpression()
+            : this.#parseExpression();
           if (
             allowResult
             && this.#peekKind() !== SyntaxKind.SemicolonToken
@@ -691,6 +693,45 @@ class Parser {
   #parseClosureExpression(): CstNode {
     const start = this.#position;
     const children: StructuralElement[] = [];
+    this.#parseClosureHeader(children);
+    children.push(this.#parseExpression());
+    return this.#node(CstKind.ClosureExpression, start, children);
+  }
+
+  #parseBareClosureExpression(): CstNode {
+    return this.#parseClosureExpression();
+  }
+
+  #parseBlockResultClosureExpression(): CstNode {
+    if (this.#expressionDepth >= maximumExpressionDepth) {
+      return this.#parseExpression();
+    }
+
+    this.#expressionDepth += 1;
+    try {
+      const start = this.#position;
+      const children: StructuralElement[] = [];
+      this.#parseClosureHeader(children);
+
+      const bodyStart = this.#position;
+      const bodyChildren: StructuralElement[] = [];
+      this.#parseStatementList(bodyChildren, ParsingContext.BlockStatements, true);
+      children.push(this.#node(CstKind.ClosureBlockBody, bodyStart, bodyChildren));
+
+      return this.#node(CstKind.ClosureExpression, start, children);
+    } finally {
+      this.#expressionDepth -= 1;
+    }
+  }
+
+  #parseClosureHeader(children: StructuralElement[]): void {
+    if (this.#peekKind() !== SyntaxKind.OpenParenToken) {
+      const parameterStart = this.#position;
+      children.push(this.#node(CstKind.ClosureParameter, parameterStart, [this.#parsePattern()]));
+      this.#expect(SyntaxKind.ArrowToken, children);
+      return;
+    }
+
     this.#consume();
     this.#parseSeparatedList(children, {
       context: ParsingContext.ClosureParameters,
@@ -705,18 +746,6 @@ class Parser {
     });
     this.#expectClosingDelimiter(SyntaxKind.CloseParenToken, children);
     this.#expect(SyntaxKind.ArrowToken, children);
-    children.push(this.#parseExpression());
-    return this.#node(CstKind.ClosureExpression, start, children);
-  }
-
-  #parseBareClosureExpression(): CstNode {
-    const start = this.#position;
-    const children: StructuralElement[] = [];
-    const parameterStart = this.#position;
-    children.push(this.#node(CstKind.ClosureParameter, parameterStart, [this.#parsePattern()]));
-    this.#expect(SyntaxKind.ArrowToken, children);
-    children.push(this.#parseExpression());
-    return this.#node(CstKind.ClosureExpression, start, children);
   }
 
   #parseBlockExpression(): CstNode {
@@ -1188,6 +1217,10 @@ class Parser {
   #looksLikeBareClosure(): boolean {
     return isPatternStart(this.#peekKind())
       && this.#peekKindAfterCurrent() === SyntaxKind.ArrowToken;
+  }
+
+  #looksLikeClosureStart(): boolean {
+    return this.#looksLikeBareClosure() || this.#looksLikeClosure();
   }
 
   #looksLikeDictionaryExpression(): boolean {

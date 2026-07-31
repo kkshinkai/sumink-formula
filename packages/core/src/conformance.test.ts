@@ -26,7 +26,10 @@ describe("grammar conformance", () => {
     ["array expressions", "[]; [1]; [1, 2, 3,];"],
     ["dictionary expressions", "{}; {name: 'Ada'}; {name,}; {name, value}; {name, value: 1, [key]: 2}; {'name': 1, 2: 'two', [key]: 2,};"],
     ["ordinary calls", "function(); function(1); function(1, 2,);"],
-    ["trailing brace calls", "function {}; function {;}; function { x -> x };"],
+    [
+      "trailing brace calls",
+      "function {}; function {;}; function { x -> let result = x; result };",
+    ],
     ["infix calls", "source transform closure map mapper;"],
     ["grouped expressions", "(1 + 2) * 3;"],
     ["closures", "() -> nil; value -> value; (value) -> value; (1, _, name,) -> name;"],

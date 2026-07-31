@@ -46,7 +46,7 @@ official TypeScript implementation at commit
 `0c2c7a358297d66df690230deaed8c98e7d77c04` (not TypeScript-Go), principally
 `scanner.ts`, `parser.ts`, `types.ts`, and `binder.ts` under `src/compiler`.
 Statement-list parsing and recovery also follow the boundaries documented by
-the Rust Reference. Braced arguments and ordinary lambda composition were
+the Rust Reference. Braced arguments and the Block-result lambda rule were
 checked against Scala 3, while missing and skipped syntax representation was
 checked against Roslyn. The architecture is adapted rather than copied:
 TypeScript's AST is not lossless, while this package requires a distinct

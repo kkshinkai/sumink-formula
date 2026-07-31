@@ -41,9 +41,11 @@ lowest:
 | 2 | `and` | left |
 | 1 | `or` | left |
 
-The arrow in a closure expression has lower precedence than every postfix and
-operator form. Its body extends as far to the right as the surrounding grammar
-permits.
+The arrow in an ordinary closure expression has lower precedence than every
+postfix and operator form. Its Expression body extends as far to the right as
+the surrounding grammar permits. When a closure head occurs in Block result
+position, the Block-specific rule applies instead: its body is the remainder
+of that Block through the matching `}`.
 
 The individual expression forms are:
 
